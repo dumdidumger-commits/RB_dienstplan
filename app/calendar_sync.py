@@ -12,6 +12,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -23,6 +24,10 @@ _LOGGER = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_NAME = "Dienstplan"
+# Alle Schichtzeiten aus dem Vivendi-Export sind lokale deutsche Zeit. Ohne explizite
+# Zeitzone wuerde Google Calendar naive dateTime-Strings entweder ablehnen oder (schlimmer)
+# stillschweigend als UTC interpretieren - das haette jede Schicht um 1-2 Stunden verschoben.
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
 
 
 class MissingTokenError(Exception):
@@ -82,8 +87,8 @@ def _to_event_body(shift: Shift) -> dict:
     description = f"Pause: {shift.pause_min} Minuten" if shift.pause_min is not None else ""
 
     if shift.start and shift.ende:
-        start_dt = datetime.combine(shift.datum, datetime.strptime(shift.start, "%H:%M").time())
-        end_dt = datetime.combine(shift.datum, datetime.strptime(shift.ende, "%H:%M").time())
+        start_dt = datetime.combine(shift.datum, datetime.strptime(shift.start, "%H:%M").time(), tzinfo=LOCAL_TZ)
+        end_dt = datetime.combine(shift.datum, datetime.strptime(shift.ende, "%H:%M").time(), tzinfo=LOCAL_TZ)
         if end_dt <= start_dt:
             end_dt += timedelta(days=1)  # Schicht ueber Mitternacht
         return {
@@ -126,8 +131,8 @@ def sync_shifts(service, calendar_id: str, shifts: list[Shift], sync_window_star
 
     existing_ids: set[str] = set()
     page_token = None
-    time_min = datetime.combine(sync_window_start, datetime.min.time()).isoformat() + "Z"
-    time_max = datetime.combine(sync_window_end, datetime.min.time()).isoformat() + "Z"
+    time_min = datetime.combine(sync_window_start, datetime.min.time(), tzinfo=LOCAL_TZ).isoformat()
+    time_max = datetime.combine(sync_window_end, datetime.min.time(), tzinfo=LOCAL_TZ).isoformat()
     while True:
         resp = service.events().list(
             calendarId=calendar_id,

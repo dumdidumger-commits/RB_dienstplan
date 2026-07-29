@@ -42,6 +42,15 @@ class Shift:
     bereich: str | None
 
 
+def _cell_str(value) -> str:
+    """Wandelt einen pandas-Zellwert sicher in einen String um. Wichtig: "value or ''"
+    waere hier ein Bug - NaN ist in Python truthy, "NaN or ''" liefert also NaN zurueck statt
+    des gewuenschten Leerstrings, und str(NaN) ergibt den literalen Text "nan"."""
+    if pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
 def load_kuerzel_mapping(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
@@ -77,17 +86,20 @@ def _resolve_typ_label(ist_code: str, mapping: dict) -> str | None:
 def parse_dienstplan(xlsx_path: str, kuerzel_mapping_path: str) -> list[Shift]:
     mapping = load_kuerzel_mapping(kuerzel_mapping_path)
 
-    df = pd.read_excel(xlsx_path, sheet_name=SHEET_NAME, dtype=str)
+    # Kein dtype=str hier: die Datum-Spalte soll pandas/openpyxl natuerlich als
+    # Timestamp/NaT einlesen (nicht als String "2026-08-01 00:00:00" o.ae.), sonst wird die
+    # Erkennung leerer Zellen unnoetig fehleranfaellig.
+    df = pd.read_excel(xlsx_path, sheet_name=SHEET_NAME)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Datum-Vererbung: pandas liest leere Zellen ohnehin als NaN -> ffill deckt die
-    # Doppeldienst-Zeilen ab.
+    # Datum-Vererbung: leere Zellen sind hier NaT (nicht float-NaN, da Datumsspalte) ->
+    # ffill deckt die Doppeldienst-Zeilen ab.
     df["Datum"] = df["Datum"].ffill()
 
     shifts: list[Shift] = []
     for _, row in df.iterrows():
         raw_datum = row.get("Datum")
-        if raw_datum is None or (isinstance(raw_datum, float) and pd.isna(raw_datum)):
+        if pd.isna(raw_datum):
             continue
         try:
             datum = pd.to_datetime(raw_datum).date()
@@ -95,12 +107,12 @@ def parse_dienstplan(xlsx_path: str, kuerzel_mapping_path: str) -> list[Shift]:
             _LOGGER.warning("Konnte Datum nicht parsen: %r - Zeile wird uebersprungen", raw_datum)
             continue
 
-        ist_code = str(row.get("Ist") or "").strip()
+        ist_code = _cell_str(row.get("Ist"))
         typ_label = _resolve_typ_label(ist_code, mapping)
         if typ_label is None:
             continue
 
-        aufgabe = str(row.get("Aufgabe") or "")
+        aufgabe = _cell_str(row.get("Aufgabe"))
         m = _AUFGABE_RE.search(aufgabe)
         start = ende = None
         pause_min = None
@@ -115,7 +127,7 @@ def parse_dienstplan(xlsx_path: str, kuerzel_mapping_path: str) -> list[Shift]:
             start=start,
             ende=ende,
             pause_min=pause_min,
-            bereich=(str(row.get("Bereich")) if row.get("Bereich") else None),
+            bereich=(_cell_str(row.get("Bereich")) or None),
         ))
 
     return shifts

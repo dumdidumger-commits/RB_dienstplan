@@ -85,11 +85,7 @@ def main() -> None:
 
     _LOGGER.info("Dienstplan-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "06:00"))
 
-    while True:
-        wait_s = seconds_until_next_run(options.get("run_time", "06:00"))
-        _LOGGER.info("Naechster Sync-Lauf in %.0f Minuten", wait_s / 60)
-        time.sleep(wait_s)
-
+    def run_and_handle_errors() -> None:
         try:
             sync_once(options)
         except vivendi.VivendiLoginError as exc:
@@ -104,6 +100,17 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 - bewusst breit, damit der Loop nie stirbt
             _LOGGER.exception("Unerwarteter Fehler im Sync-Lauf")
             notify_error("Dienstplan-Sync: Unerwarteter Fehler", str(exc))
+
+    # Einmal sofort beim (Neu-)Start laufen lassen, statt bis zu 24h auf die naechste
+    # run_time zu warten - hilfreich sowohl fuer den ersten Testlauf als auch im normalen
+    # Betrieb (z.B. nach einem Neustart des Add-ons gibt es sofort einen aktuellen Stand).
+    run_and_handle_errors()
+
+    while True:
+        wait_s = seconds_until_next_run(options.get("run_time", "06:00"))
+        _LOGGER.info("Naechster Sync-Lauf in %.0f Minuten", wait_s / 60)
+        time.sleep(wait_s)
+        run_and_handle_errors()
 
 
 if __name__ == "__main__":

@@ -5,6 +5,10 @@ PyYAML==6.0.2
 google-api-python-client==2.149.0
 google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.1
+# Fallback-Zeitzonendatenbank fuer das stdlib-Modul "zoneinfo" (Schichtzeiten muessen
+# korrekt als Europe/Berlin interpretiert werden) - falls das schlanke python:slim-Image
+# kein System-tzdata mitbringt, greift Python automatisch auf dieses Paket zurueck.
+tzdata==2024.2
 
 # Am 29.07.2026 noetig geworden: das Vivendi-Login schickt ein "PublicKey"-Feld, dessen
 # Erzeugung sich aus dem minifizierten Angular-Bundle nicht sicher rekonstruieren liess.
