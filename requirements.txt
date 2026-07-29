@@ -1,0 +1,14 @@
+requests==2.32.3
+pandas==2.2.3
+openpyxl==3.1.5
+PyYAML==6.0.2
+google-api-python-client==2.149.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.1
+
+# Am 29.07.2026 noetig geworden: das Vivendi-Login schickt ein "PublicKey"-Feld, dessen
+# Erzeugung sich aus dem minifizierten Angular-Bundle nicht sicher rekonstruieren liess.
+# Playwright bedient stattdessen das echte Login-Formular im echten (headless) Browser -
+# der Mechanismus muss dadurch gar nicht verstanden werden. Deutlich schwereres Image
+# (Chromium-Binary, siehe Dockerfile), aber robuster als ein Rateversuch bei der Auth.
+playwright==1.47.0

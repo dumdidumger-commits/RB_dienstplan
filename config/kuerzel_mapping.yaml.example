@@ -1,0 +1,42 @@
+# Kuerzel-Mapping fuer die "Ist"-Spalte aus dem Vivendi-Export.
+#
+# Kopiere diese Datei zu "kuerzel_mapping.yaml" (ohne .example) und passe sie an - das Add-on
+# liest nur die Datei ohne .example. So bleiben deine Anpassungen bei einem Add-on-Update
+# unangetastet.
+#
+# Aufbau:
+#   exact:   genaue Codes aus der Ist-Spalte (Gross-/Kleinschreibung wird ignoriert). Hat
+#            immer Vorrang vor "prefix".
+#   prefix:  Fallback ueber den ERSTEN Buchstaben, falls kein exakter Treffer in "exact"
+#            existiert - das deckt neue/unbekannte Team-Kuerzel automatisch ab (z.B. "F12"
+#            faellt automatisch unter "F" -> Fruehschicht), ohne dass du jeden einzelnen
+#            Teamcode einzeln eintragen musst.
+#
+# Jeder Eintrag ist entweder:
+#   - ein Text (= Schicht-Bezeichnung, wird im Kalender-Titel verwendet), oder
+#   - null (= "kein Kalendereintrag", z.B. freie Tage)
+#
+# Aus der bisher gesichteten Beispieldatei (f2eaef64) sind mir zwei Codes aufgefallen, die in
+# der urspruenglichen Spezifikation NICHT beschrieben waren: "SF" und "TB" (beide als zweite
+# Schicht an einem Tag, also vermutlich Kuerzel fuer bestimmte Teilaufgaben/Uebergaben). Ich
+# habe sie unten mit einer PLATZHALTER-Bezeichnung eingetragen - bitte pruef/korrigiere das,
+# ich konnte die genaue Bedeutung nicht aus den Daten allein ableiten.
+
+exact:
+  "!": null          # gesonderter Vermerk - laut Spezifikation kein Kalendereintrag, wird aber geloggt
+  "/": null           # frei
+  "BB": "Bewohnerbesprechung"
+  "TB": "TB (bitte pruefen/anpassen)"
+  "SF": "SF (bitte pruefen/anpassen)"
+
+prefix:
+  "F": "Fruehschicht"
+  "S": "Spaetschicht"
+  # "FZA" wird durch das Prefix "F" eigentlich auch erfasst (faelschlich als Fruehschicht) -
+  # deshalb hier ein exakter Vorrang-Eintrag noetig fuer alle "FZA ..."-Codes:
+
+exact_prefix_override:
+  # Codes, die mit diesem Text BEGINNEN, werden auf null (kein Eintrag) gemappt - hat Vorrang
+  # vor "prefix" oben, aber wird erst nach "exact" geprueft. Deckt "FZA So", "FZA Mo" usw. ab,
+  # ohne jede Kombination einzeln auflisten zu muessen.
+  "FZA": null

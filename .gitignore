@@ -1,0 +1,5 @@
+config/kuerzel_mapping.yaml
+config/token.json
+config/client_secret.json
+__pycache__/
+*.pyc
