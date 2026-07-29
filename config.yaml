@@ -2,7 +2,7 @@ name: "Vivendi Dienstplan Sync"
 version: "0.1.0"
 slug: "dienstplan_sync"
 description: "Synchronisiert den Vivendi-Dienstplan taeglich mit einem Google-Kalender"
-url: "https://github.com/USERNAME/REPO"
+url: "https://github.com/dumdidumger-commits/RB_dienstplan"
 arch:
   - amd64
   - aarch64
