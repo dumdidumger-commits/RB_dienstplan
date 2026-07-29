@@ -62,10 +62,11 @@ dienstplan_sync/
   setup_oauth.py           Einmaliges LOKALES Setup-Skript (siehe unten) - NICHT im Container
   app/
     main.py                Einstiegspunkt, Scheduler-Loop
-    vivendi.py              Login + Export-Download (Platzhalter, Schritt 2/3 offen)
+    vivendi.py              Login + Export-Download (Playwright, Selektoren fuer Export noch nicht live verifiziert)
     parser.py               Excel-Parser
     calendar_sync.py        Google-Calendar-Anbindung + Sync-Logik
     notify.py                HA-persistent_notification bei Fehlern
+    test_calendar.py        Eigenstaendiger Test NUR fuer den Google-Teil (siehe unten)
   config/
     kuerzel_mapping.yaml.example   Vorlage fuer die Schicht-Kuerzel-Zuordnung
 ```
@@ -98,6 +99,19 @@ den Share-Ordner kopieren.
 
 Der laufende Add-on-Container liest danach nur noch diese Datei und erneuert den
 Zugriffstoken selbststaendig ueber den enthaltenen Refresh-Token - kein Browser mehr noetig.
+
+**Google-Teil unabhaengig vom Vivendi-Teil testen:** Sobald `token.json` an Ort und Stelle
+liegt, kannst du ueber die "Advanced SSH & Web Terminal"-Add-on-Konsole in den laufenden
+`dienstplan_sync`-Container wechseln und dort testen, ohne auf den (noch nicht verifizierten)
+Vivendi-Export warten zu muessen:
+
+```
+docker exec -it addon_local_dienstplan_sync python3 /app/test_calendar.py
+```
+
+Meldet der Befehl "Kalender 'Dienstplan' vorhanden" und zeigt eine ID an, funktioniert der
+komplette Google-Teil (Token, Berechtigung, Kalender-Erstellung) bereits - unabhaengig davon,
+ob der Vivendi-Login/Export schon steht.
 
 ## Kuerzel-Mapping anpassen
 
