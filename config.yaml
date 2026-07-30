@@ -10,6 +10,10 @@ arch:
 init: false
 startup: application
 boot: auto
+# Noetig, damit das SUPERVISOR_TOKEN Zugriff auf die Core-REST-API hat (persistent_notification
+# bei Fehlern, siehe notify.py) - fehlte urspruenglich, fuehrte beim ersten echten Testlauf zu
+# "401 Unauthorized" bei jedem Fehlerversuch (2026-07-30).
+homeassistant_api: true
 options:
   vivendi_username: ""
   vivendi_password: ""

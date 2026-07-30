@@ -43,12 +43,17 @@ LOGIN_URL = "https://vivendiselfservice.johanniter.de:8755/areas/login/#/login"
 # Bewusst unter /share statt /data: /share ist von aussen (Samba, File-Editor-Add-on, andere
 # Add-ons mit share:rw) einsehbar, /data ist der private, isolierte Datenbereich dieses
 # Add-ons und von aussen nicht erreichbar.
-_DEBUG = os.environ.get("DIENSTPLAN_SYNC_DEBUG") == "1"
+#
+# WICHTIG (Bug gefunden 2026-07-30 beim ersten echten Testlauf): dieses Flag darf NICHT als
+# Modul-Konstante zum Import-Zeitpunkt gelesen werden. main.py importiert vivendi ganz oben,
+# noch bevor main() die Optionen laedt und DIENSTPLAN_SYNC_DEBUG setzt - eine Konstante haette
+# also immer den Stand VOR dem Setzen der Env-Variable eingefroren (= immer False). Deshalb
+# hier bei jedem Aufruf frisch aus der Umgebung lesen.
 _DEBUG_DIR = "/share/dienstplan_sync/debug"
 
 
 def _debug_shot(page: Page, name: str) -> None:
-    if not _DEBUG:
+    if os.environ.get("DIENSTPLAN_SYNC_DEBUG") != "1":
         return
     os.makedirs(_DEBUG_DIR, exist_ok=True)
     path = f"{_DEBUG_DIR}/{name}.png"
