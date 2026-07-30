@@ -3,55 +3,47 @@
 Home-Assistant-Add-on, das taeglich automatisch den Vivendi-Dienstplan herunterlaedt und mit
 einem dedizierten Google-Kalender ("Dienstplan") abgleicht.
 
-## Status (Stand: 29.07.2026)
+## Status (Stand: 30.07.2026) — voll funktionsfaehig, Ende-zu-Ende live verifiziert
 
 | Schritt | Status |
 |---|---|
 | 1. Add-on-Grundgerüst (config.yaml, Dockerfile, run.sh-Aequivalent) | ✅ fertig |
-| 2. Vivendi-Portal-Login/Export-Mechanismus ermitteln | ✅ Code steht komplett (Login + Navigation zu Kalender→Menu→Export→Excel), Selektoren fuer Drei-Punkte-Menu/Excel sind Bestwissen und brauchen einmal Live-Verifikation |
-| 3. Download-Funktion | ✅ implementiert (`vivendi.download_dienstplan`), noch nicht live getestet (siehe Schritt 9/10) |
-| 4. Excel-Parser | ✅ fertig, gegen echte Beispieldatei manuell durchgetestet (siehe unten) |
-| 5. Google-OAuth-Setup + Code | ✅ Code fertig, Ersteinrichtung durch dich noch offen |
-| 6. Kalender-Suche/-Erstellung | ✅ fertig |
-| 7. Sync-Logik (Insert/Update/Delete) | ✅ fertig |
+| 2. Vivendi-Portal-Login/Export-Mechanismus | ✅ live verifiziert (echter Login + Navigation) |
+| 3. Download-Funktion | ✅ live verifiziert (echter Excel-Download) |
+| 4. Excel-Parser | ✅ fertig, gegen echte Daten verifiziert |
+| 5. Google-OAuth-Setup + Code | ✅ fertig, Ersteinrichtung durchgefuehrt |
+| 6. Kalender-Suche/-Erstellung | ✅ fertig, Kalender "Dienstplan" live angelegt |
+| 7. Sync-Logik (Insert/Update/Delete) | ✅ live verifiziert (18 Termine erfolgreich angelegt) |
 | 8. Scheduler + Logging + Fehlerbenachrichtigung | ✅ fertig |
-| 9. Lokal installieren/testen | ⏳ offen - siehe "Installation" unten |
-| 10. Testlauf (Beispieldatei / echtes Portal) | ⏳ Excel-Parser manuell verifiziert, echter End-to-End-Lauf steht noch aus |
-| 11. README | 🔄 dieser Stand, wird bei jedem weiteren Schritt ergaenzt |
+| 9. Lokal installieren/testen | ✅ als Add-on `101a1615_dienstplan_sync` installiert und laeuft |
+| 10. Testlauf (Beispieldatei / echtes Portal) | ✅ kompletter Ende-zu-Ende-Lauf gegen das echte Portal erfolgreich |
+| 11. README | ✅ dieser Stand |
 
-**Wichtigste offene Baustelle:** Schritt 2/3 (Vivendi-Portal), genauer: die Navigation nach
-dem Login zum Dienstplan-Export. Der Login selbst ist geloest (siehe unten), aber welche
-Seite/welcher Button nach dem Einloggen zum Excel-Export fuehrt, konnte ich nicht durch
-Code-Analyse herausfinden - die entsprechenden Angular-Module laden erst nach echtem Login
-nach. Das brauche ich noch von dir: entweder eine kurze Beschreibung der Klick-Schritte
-(z.B. "nach Login -> Menuepunkt 'Dienstplan' -> Button 'Excel-Export'"), oder ich baue einen
-Debug-Modus, der bei einem echten Testlauf nach jedem Schritt einen Screenshot speichert.
+**Weg dorthin (30.07.2026, drei echte Testlaeufe mit Debug-Screenshots noetig):** Die
+urspruenglich aus dem Gedaechtnis beschriebene Klickfolge ("Kalender anzeigen" -> Drei-Punkte-
+Menu -> Export -> Excel) passte nicht zur echten Oberflaeche. Tatsaechlicher Ablauf: Startseite
+-> Lesezeichen "Dienstplan" -> Kalenderansicht -> zum aktuellen Monat navigieren (Export bezieht
+sich auf den gerade angezeigten Monat, nicht automatisch den aktuellen!) -> direkt beschrifteter
+"Export"-Button (kein Drei-Punkte-Menu) -> "Excel". Details und exakte Selektoren siehe
+Docstring/Kommentare in `vivendi.py`.
 
-### Login-Mechanismus (geloest)
+### Login-Mechanismus (geloest und live verifiziert)
 
 Das Formular schickt neben Username/Password ein drittes Pflichtfeld `PublicKey` an
-`/api/vivendi/v1/auth/login` - vermutlich clientseitig per Web-Crypto-API erzeugt, aus dem
-minifizierten Bundle nicht sicher rekonstruierbar. Deshalb jetzt **Playwright**
-(echter Headless-Chromium) statt reiner `requests`-Session: Das Formular wird ganz normal
-ueber die sichtbaren Labels "Benutzer"/"Kennwort" befuellt und per "Anmelden"-Button
-abgeschickt - die Seite generiert PublicKey usw. selbst, wir muessen den Mechanismus nicht
-verstehen. Kompletter Login-Endpunkt und Feldnamen wurden ausschliesslich durch sichere,
-credential-lose Analyse ermittelt (leere Test-Anfrage, HTTP-Statuscodes) - es wurde zu
-keinem Zeitpunkt ein echter Login-Versuch mit deinen Zugangsdaten durchgefuehrt, bevor der
-Code dafuer stand.
+`/api/vivendi/v1/auth/login` - vermutlich clientseitig per Web-Crypto-API erzeugt. Deshalb
+**Playwright** (echter Headless-Chromium) statt reiner `requests`-Session: Das Formular wird
+ganz normal ueber die sichtbaren Labels "Benutzer"/"Kennwort" befuellt und per "Anmelden"-
+Button abgeschickt - die Seite generiert PublicKey usw. selbst. Mit echten Zugangsdaten
+getestet (30.07.2026) - funktioniert zuverlaessig.
 
-**Debug-Hilfe fuer den ersten echten Testlauf:** Add-on-Option `debug_screenshots: true`
-setzen - dann speichert `vivendi.py` nach jedem Navigationsschritt (Login, "Kalender
-anzeigen", Drei-Punkte-Menu, Export-Menu, Download) einen Screenshot unter
-`/share/dienstplan_sync/debug/`.
-Damit laesst sich sofort sehen, an welcher Stelle die (noch unverifizierten) Selektoren
-fuer Drei-Punkte-Menu/Excel-Auswahl ggf. angepasst werden muessen.
-
-**Testen konnte ich das trotzdem noch nicht:** Die Entwicklungsumgebung, in der dieses
-Add-on entsteht, verbietet aus Sicherheitsgruenden das Ausfuehren heruntergeladener
-Programme (auch der Chromium-Browser, den Playwright braucht) - `EACCES`/Permission denied
-beim Start, ganz bewusst so eingerichtet. Der Code ist nach bestem Wissen geschrieben, die
-echte Verifikation kann erst in Schritt 9/10 (echter Add-on-Container) stattfinden.
+**Debug-Hilfe:** Add-on-Option `debug_screenshots: true` setzen - dann speichert `vivendi.py`
+nach jedem Navigationsschritt einen Screenshot unter `/share/dienstplan_sync/debug/`, bei
+Bedarf zusaetzlich ein HTML-Dump der Seite (siehe `_debug_shot(..., html=True)` in
+`vivendi.py`) - war entscheidend, um die drei echten Selektor-Korrekturen (Lesezeichen statt
+Menuepunkt, direkter Export-Button statt Drei-Punkte-Menu, echte aria-label fuer die Monats-
+Navigation) schnell zu finden. Fuer den taeglichen Normalbetrieb kann die Option wieder auf
+`false` gesetzt werden - sie kostet nur unnoetig Zeit/Speicherplatz, ist aber harmlos, wenn
+sie an bleibt.
 
 ## Verzeichnisstruktur
 
@@ -63,7 +55,7 @@ dienstplan_sync/
   setup_oauth.py           Einmaliges LOKALES Setup-Skript (siehe unten) - NICHT im Container
   app/
     main.py                Einstiegspunkt, Scheduler-Loop
-    vivendi.py              Login + Export-Download (Playwright, Selektoren fuer Export noch nicht live verifiziert)
+    vivendi.py              Login + Export-Download (Playwright, live verifiziert 30.07.2026)
     parser.py               Excel-Parser
     calendar_sync.py        Google-Calendar-Anbindung + Sync-Logik
     notify.py                HA-persistent_notification bei Fehlern
@@ -101,44 +93,39 @@ den Share-Ordner kopieren.
 Der laufende Add-on-Container liest danach nur noch diese Datei und erneuert den
 Zugriffstoken selbststaendig ueber den enthaltenen Refresh-Token - kein Browser mehr noetig.
 
-**Google-Teil unabhaengig vom Vivendi-Teil testen:** Sobald `token.json` an Ort und Stelle
-liegt, kannst du ueber die "Advanced SSH & Web Terminal"-Add-on-Konsole in den laufenden
-`dienstplan_sync`-Container wechseln und dort testen, ohne auf den (noch nicht verifizierten)
-Vivendi-Export warten zu muessen:
+**Google-Teil unabhaengig testen:** Ueber die "Advanced SSH & Web Terminal"-Add-on-Konsole in
+den laufenden `dienstplan_sync`-Container wechseln:
 
 ```
 docker exec -it addon_local_dienstplan_sync python3 /app/test_calendar.py
 ```
 
 Meldet der Befehl "Kalender 'Dienstplan' vorhanden" und zeigt eine ID an, funktioniert der
-komplette Google-Teil (Token, Berechtigung, Kalender-Erstellung) bereits - unabhaengig davon,
-ob der Vivendi-Login/Export schon steht.
+komplette Google-Teil (Token, Berechtigung, Kalender-Erstellung).
 
 ## Kuerzel-Mapping anpassen
 
 `config/kuerzel_mapping.yaml.example` nach `config/kuerzel_mapping.yaml` kopieren (ohne
 `.example`) und anpassen. Details/Logik siehe Kommentare in der Datei selbst.
 
-**Zwei Kuerzel aus der Beispieldatei brauchen noch deine Bestaetigung:** `SF` und `TB`
-tauchen als zweite Schicht an einzelnen Tagen auf, waren in der urspruenglichen
-Spezifikation aber nicht beschrieben. Ich hab sie testweise mit einer Platzhalter-Bezeichnung
-eingetragen ("SF (bitte pruefen/anpassen)" bzw. "TB (bitte pruefen/anpassen)") - bitte in der
-Mapping-Datei durch die richtige Bezeichnung ersetzen.
+**Bereits vom Nutzer bestaetigt (30.07.2026):** `SF` = Sonderfunktion, `TB` = Teambesprechung,
+`Ut` = Urlaubstag. `U2` und `kfE` sind auf ausdruecklichen Wunsch bewusst 1:1 mit dem Kuerzel
+als Bezeichnung eingetragen (Bedeutung aktuell nicht bekannt) - bei Gelegenheit in der Datei
+selbst durch die echte Bezeichnung ersetzbar, keine Code-Aenderung noetig.
 
-## Installation als lokales Add-on (Schritt 9, noch nicht durchgefuehrt)
+## Installation als Add-on
 
-Dieser Ordner liegt aktuell unter `/share/dienstplan_sync` und ist von dort noch NICHT als
-Add-on installierbar (Home Assistant sucht lokale Add-ons unter `/addons`, worauf dieser
-Claude-Code-Container keinen Zugriff hat). Geplanter Weg: GitHub-Repository, das du als
-Add-on-Repository in HA eintraegst - Details folgen, sobald das Repo eingerichtet ist.
+Liegt als GitHub-Repository vor (`github.com/dumdidumger-commits/RB_dienstplan`), als
+Custom-Repository "RB Dienstplan Sync" in Home Assistant eingetragen. Installation:
+Einstellungen → Add-ons → Add-on Store → "Vivendi Dienstplan Sync" → Installieren. Nutzername/
+Passwort/Sync-Optionen danach unter dem Reiter "Konfiguration" des Add-ons eintragen, dann
+starten.
 
-## Beispieldatei-Validierung (Schritt 4/10, Teilstand)
+## Beispieldatei-Validierung und Ende-zu-Ende-Test (Schritt 4/10, abgeschlossen)
 
-Der Parser wurde manuell gegen die von dir bereitgestellte Beispieldatei (August 2026,
-39 Zeilen) durchgerechnet - alle Faelle aus der Spezifikation (Datum-Vererbung bei
-Doppeldiensten, `!`-Vermerk, `BB`, `FZA So`, `/`) kommen darin vor und wurden Zeile fuer
-Zeile gegen die erwartete Logik geprueft. Eine echte automatisierte Testausfuehrung war in
-der aktuellen Entwicklungsumgebung nicht moeglich (pandas/openpyxl liessen sich dort wegen
-einer Sandbox-Einschraenkung nicht installieren) - das ist unabhaengig vom eigentlichen
-Docker-Build und sollte dort kein Problem sein, wird aber in Schritt 9/10 nochmal real
-verifiziert.
+Der Parser wurde zunaechst manuell gegen eine Beispieldatei (August 2026, 39 Zeilen)
+durchgerechnet - alle Spezialfaelle (Datum-Vererbung bei Doppeldiensten, `!`-Vermerk, `BB`,
+`FZA So`, `/`) wurden Zeile fuer Zeile geprueft. Am 30.07.2026 folgte der echte Ende-zu-Ende-
+Test gegen das produktive Vivendi-Portal mit echten Zugangsdaten: Login, Navigation, Export,
+Download, Parsing (18 Schichten, keine unbekannten Kuerzel mehr) und Google-Calendar-Sync
+liefen vollstaendig automatisch durch, 18 Termine wurden erfolgreich angelegt.
