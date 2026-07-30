@@ -16,8 +16,7 @@ _SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 _BASE_URL = "http://supervisor/core/api"
 
 
-def notify_error(title: str, message: str, notification_id: str = "dienstplan_sync_error") -> None:
-    """Erzeugt/aktualisiert eine persistent_notification in Home Assistant."""
+def _create_notification(title: str, message: str, notification_id: str) -> None:
     if not _SUPERVISOR_TOKEN:
         _LOGGER.error("Kein SUPERVISOR_TOKEN vorhanden, kann keine HA-Benachrichtigung senden: %s - %s", title, message)
         return
@@ -31,6 +30,17 @@ def notify_error(title: str, message: str, notification_id: str = "dienstplan_sy
         resp.raise_for_status()
     except requests.RequestException:
         _LOGGER.exception("Konnte persistent_notification nicht an Home Assistant senden")
+
+
+def notify_error(title: str, message: str, notification_id: str = "dienstplan_sync_error") -> None:
+    """Erzeugt/aktualisiert eine persistent_notification in Home Assistant."""
+    _create_notification(title, message, notification_id)
+
+
+def notify_info(title: str, message: str, notification_id: str) -> None:
+    """Wie notify_error, aber semantisch fuer nicht-fehlerhafte Hinweise (z.B. einmalige
+    ICS-URL-Mitteilung) - technisch identisch, eigener Name nur fuer Lesbarkeit im Aufrufcode."""
+    _create_notification(title, message, notification_id)
 
 
 def clear_error(notification_id: str = "dienstplan_sync_error") -> None:

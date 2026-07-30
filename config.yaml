@@ -22,6 +22,7 @@ options:
   run_time: "06:00"
   log_level: "info"
   debug_screenshots: false
+  nabu_casa_base_url: "https://9socrjhuhu4fraznz7zna34u9zhznzrx.ui.nabu.casa"
 schema:
   vivendi_username: str
   vivendi_password: password
@@ -30,5 +31,13 @@ schema:
   run_time: match(^([0-1][0-9]|2[0-3]):[0-5][0-9]$)
   log_level: list(debug|info|warning|error)
   debug_screenshots: bool
+  nabu_casa_base_url: url
 map:
   - share:rw
+  # Noetig fuer die ICS-Kalender-URL (30.07.2026, zusaetzliche Absicherung neben der
+  # Google-API-Synchronisation, falls der OAuth-Testzugang nach 7 Tagen ablaeuft): schreibt
+  # eine .ics-Datei nach /homeassistant/www/, die ueber die bereits vorhandene, extern
+  # erreichbare Nabu-Casa-Cloud-URL (.../local/...) unauthentifiziert abrufbar ist - Google
+  # kann bei "Kalender von URL abonnieren" keine Zugangsdaten mitschicken, daher zwingend
+  # ohne Login, abgesichert nur durch einen langen Zufallsnamen (siehe ics_export.py).
+  - homeassistant_config:rw

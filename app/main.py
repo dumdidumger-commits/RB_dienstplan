@@ -12,7 +12,8 @@ from datetime import date, datetime, timedelta
 import vivendi
 import parser as dienstplan_parser
 import calendar_sync
-from notify import clear_error, notify_error
+import ics_export
+from notify import clear_error, notify_error, notify_info
 
 OPTIONS_PATH = "/data/options.json"
 DIENSTPLAN_CACHE_PATH = "/data/last_dienstplan.xlsx"
@@ -82,6 +83,25 @@ def sync_once(options: dict) -> None:
         result.inserted, result.updated, result.deleted, result.unchanged,
     )
     clear_error()
+
+    # Zusaetzliche, von der Google-API unabhaengige Absicherung (30.07.2026, Nutzerwunsch):
+    # .ics-Datei parallel schreiben, falls der OAuth-Testzugang irgendwann ausfaellt. Bewusst
+    # in einem eigenen try/except, damit ein Fehler hier NIE den bereits erfolgreichen
+    # Haupt-Sync (oben) im Nachhinein als Fehlschlag melden kann.
+    try:
+        filename, is_new = ics_export.write_ics(shifts)
+        base_url = options.get("nabu_casa_base_url", "").rstrip("/")
+        ics_url = f"{base_url}/local/{filename}"
+        _LOGGER.info("ICS-Kalender-URL: %s", ics_url)
+        if is_new:
+            notify_info(
+                "Dienstplan-Sync: ICS-Kalender-URL bereit",
+                f"Einmalig in Google Kalender eintragen unter 'Weitere Kalender' -> "
+                f"'Von URL': {ics_url}",
+                notification_id="dienstplan_sync_ics_url",
+            )
+    except Exception:  # noqa: BLE001 - darf den erfolgreichen Haupt-Sync nie gefaehrden
+        _LOGGER.exception("ICS-Datei konnte nicht geschrieben werden (Haupt-Sync war trotzdem erfolgreich)")
 
 
 def seconds_until_next_run(run_time: str) -> float:
