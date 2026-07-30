@@ -133,20 +133,13 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             page.wait_for_load_state("networkidle", timeout=20000)
             _debug_shot(page, "03_kalender")
 
-            # Drei-Punkte-Menu: meist ein Material-Icon-Button ohne sichtbaren Text -
-            # ueblichste aria-label-Varianten der Reihe nach versuchen.
-            more_button = page.get_by_role("button", name="Mehr").or_(
-                page.get_by_role("button", name="Weitere Optionen")
-            ).or_(
-                page.get_by_role("button", name="Optionen")
-            ).or_(
-                page.locator("button:has(mat-icon:text('more_vert'))")
-            )
-            more_button.first.click()
-            _debug_shot(page, "04_dreipunkte_menu")
-
-            page.get_by_text("Export", exact=False).click()
-            _debug_shot(page, "05_export_menu")
+            # KORRIGIERT (30.07.2026, zweiter Testlauf): kein Drei-Punkte-Menu vorhanden - die
+            # Kalenderansicht hat oben links einen direkt beschrifteten "Export"-Button
+            # (Dropdown-Menu-Trigger, Material-Style-Pfeil daneben), siehe Screenshot
+            # 99_export_timeout.png dieses Laufs. Ein Klick direkt darauf oeffnet das Menu mit
+            # den Export-Formaten.
+            page.get_by_role("button", name="Export").click()
+            _debug_shot(page, "04_export_menu")
 
             with page.expect_download(timeout=30000) as download_info:
                 page.get_by_text("Excel", exact=False).click()
@@ -157,8 +150,8 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             _debug_shot(page, "99_export_timeout")
             raise VivendiExportError(
                 "Navigation zum Export oder Download nicht innerhalb des Zeitlimits "
-                "abgeschlossen - vermutlich muessen die Selektoren fuer Drei-Punkte-Menu/"
-                "Export/Excel nachjustiert werden (DIENSTPLAN_SYNC_DEBUG=1 setzen und "
+                "abgeschlossen - vermutlich muessen die Selektoren fuer Export-Button/"
+                "Excel-Menupunkt nachjustiert werden (DIENSTPLAN_SYNC_DEBUG=1 setzen und "
                 "Screenshots unter /share/dienstplan_sync/debug/ pruefen)."
             ) from exc
         finally:
