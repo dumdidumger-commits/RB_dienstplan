@@ -16,18 +16,14 @@
 #   - ein Text (= Schicht-Bezeichnung, wird im Kalender-Titel verwendet), oder
 #   - null (= "kein Kalendereintrag", z.B. freie Tage)
 #
-# Aus der bisher gesichteten Beispieldatei (f2eaef64) sind mir zwei Codes aufgefallen, die in
-# der urspruenglichen Spezifikation NICHT beschrieben waren: "SF" und "TB" (beide als zweite
-# Schicht an einem Tag, also vermutlich Kuerzel fuer bestimmte Teilaufgaben/Uebergaben). Ich
-# habe sie unten mit einer PLATZHALTER-Bezeichnung eingetragen - bitte pruef/korrigiere das,
-# ich konnte die genaue Bedeutung nicht aus den Daten allein ableiten.
+# "SF" und "TB" vom Nutzer bestaetigt (2026-07-30): SF = Sonderfunktion, TB = Teambesprechung.
 
 exact:
   "!": null          # gesonderter Vermerk - laut Spezifikation kein Kalendereintrag, wird aber geloggt
   "/": null           # frei
   "BB": "Bewohnerbesprechung"
-  "TB": "TB (bitte pruefen/anpassen)"
-  "SF": "SF (bitte pruefen/anpassen)"
+  "TB": "Teambesprechung"
+  "SF": "Sonderfunktion"
 
 prefix:
   "F": "Fruehschicht"
