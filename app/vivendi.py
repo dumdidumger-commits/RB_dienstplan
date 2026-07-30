@@ -89,26 +89,22 @@ def _go_to_current_month(page: Page) -> None:
 
     Noetig, weil der Export sich auf den GERADE ANGEZEIGTEN Monat bezieht, nicht automatisch
     auf den aktuellen (echt beobachtet 30.07.2026: Ansicht zeigte beim Laden "Februar 2026",
-    5 Monate in der Vergangenheit, wodurch der Sync 0 Treffer im Sync-Fenster fand). Noch NICHT
-    live verifiziert - mehrere Fallback-Selektoren fuer die Pfeil-Buttons, analog zum
-    urspruenglichen (und dann korrigierten) Drei-Punkte-Menu-Versuch. Bricht defensiv ab,
-    wenn die Monatsueberschrift nicht erkannt wird, statt endlos zu klicken.
+    5 Monate in der Vergangenheit, wodurch der Sync 0 Treffer im Sync-Fenster fand).
+
+    Selektoren verifiziert per HTML-Dump (30.07.2026, dritter Testlauf, siehe
+    03_kalender.html): Ueberschrift ist ein <div class="cx-calendar-date-select__date-label">,
+    die Pfeil-Buttons haben eindeutige aria-label "Monat Zurück"/"Monat Vor" (kein Icon-Text-
+    Match noetig - die Icons sind SVGs ohne Textinhalt, das hatte den ersten Versuch scheitern
+    lassen). Bricht defensiv ab, wenn die Monatsueberschrift nicht erkannt wird, statt endlos
+    zu klicken.
     """
     import re
     from datetime import date as _date
 
     target = (date_today := _date.today()).year, date_today.month
-    heading = page.locator("text=/^[A-Za-zäöüÄÖÜ]+ \\d{4}$/").first
-    next_button = page.get_by_role("button", name=re.compile("nächst|weiter|next", re.I)).or_(
-        page.locator("button:has(mat-icon:text('chevron_right'))")
-    ).or_(
-        page.locator("button:has(mat-icon:text('navigate_next'))")
-    ).first
-    prev_button = page.get_by_role("button", name=re.compile("vorherig|zurück|previous", re.I)).or_(
-        page.locator("button:has(mat-icon:text('chevron_left'))")
-    ).or_(
-        page.locator("button:has(mat-icon:text('navigate_before'))")
-    ).first
+    heading = page.locator(".cx-calendar-date-select__date-label").first
+    next_button = page.get_by_role("button", name="Monat Vor")
+    prev_button = page.get_by_role("button", name="Monat Zurück")
 
     for _ in range(36):  # Sicherheitsgrenze: max. 3 Jahre Differenz, verhindert Endlosschleife
         try:
