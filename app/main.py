@@ -16,8 +16,15 @@ from notify import clear_error, notify_error
 
 OPTIONS_PATH = "/data/options.json"
 DIENSTPLAN_CACHE_PATH = "/data/last_dienstplan.xlsx"
+DIENSTPLAN_CACHE_PATH_NEXT_MONTH = "/data/last_dienstplan_folgemonat.xlsx"
 TOKEN_PATH = "/share/dienstplan_sync/config/token.json"
 KUERZEL_MAPPING_PATH = "/share/dienstplan_sync/config/kuerzel_mapping.yaml"
+
+# Vom Nutzer bestaetigt (30.07.2026): Vivendi veroeffentlicht den Dienstplan fuer den
+# Folgemonat jeweils am 15. oder 16. des Vormonats (mal der eine, mal der andere Tag). Ab dem
+# 17. ist der Folgemonat also sicher verfuegbar und wird fuer die eigene Planung mit
+# importiert.
+NEXT_MONTH_AVAILABLE_FROM_DAY = 17
 
 _LOGGER = logging.getLogger("dienstplan_sync")
 
@@ -39,16 +46,26 @@ def setup_logging(level_name: str) -> None:
 def sync_once(options: dict) -> None:
     _LOGGER.info("Starte Dienstplan-Sync")
 
-    xlsx_path = vivendi.download_dienstplan(
+    target_paths = [DIENSTPLAN_CACHE_PATH]
+    if date.today().day >= NEXT_MONTH_AVAILABLE_FROM_DAY:
+        target_paths.append(DIENSTPLAN_CACHE_PATH_NEXT_MONTH)
+        _LOGGER.info(
+            "Tag %d >= %d - Folgemonat ist bei Vivendi bereits verfuegbar, wird mit importiert",
+            date.today().day, NEXT_MONTH_AVAILABLE_FROM_DAY,
+        )
+
+    xlsx_paths = vivendi.download_dienstplan(
         login_url=options["vivendi_login_url"],
         username=options["vivendi_username"],
         password=options["vivendi_password"],
-        target_path=DIENSTPLAN_CACHE_PATH,
+        target_paths=target_paths,
     )
-    _LOGGER.info("Dienstplan heruntergeladen: %s", xlsx_path)
+    _LOGGER.info("Dienstplan heruntergeladen: %s", ", ".join(xlsx_paths))
 
-    shifts = dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH)
-    _LOGGER.info("%d Schicht(en) aus Excel geparst", len(shifts))
+    shifts = []
+    for xlsx_path in xlsx_paths:
+        shifts.extend(dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH))
+    _LOGGER.info("%d Schicht(en) aus %d Datei(en) geparst", len(shifts), len(xlsx_paths))
 
     service = calendar_sync.build_service(TOKEN_PATH)
     calendar_id = calendar_sync.get_or_create_calendar_id(service)

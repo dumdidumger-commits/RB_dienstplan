@@ -21,19 +21,25 @@ RECHERCHE-STAND (29.07.2026, per HTML/JS-Analyse ohne Zugangsdaten zu verwenden)
   Lesezeichen "Dienstplan" (nicht "Kalender anzeigen", das kommt nirgends vor) -> Kalender-
   ansicht mit einem direkt beschrifteten "Export"-Button oben links (kein Drei-Punkte-Menu) ->
   Klick oeffnet ein Dropdown mit "Excel" als Option -> Download startet.
-- WICHTIGER BEFUND (2. Testlauf, 30.07.2026): Der Export bezieht sich auf den GERADE
+- WICHTIGER BEFUND (2./3. Testlauf, 30.07.2026): Der Export bezieht sich auf den GERADE
   ANGEZEIGTEN Monat der Kalenderansicht, nicht automatisch auf den aktuellen Monat. Beim
   Testlauf zeigte die Ansicht beim ersten Laden "Februar 2026" (vermutlich der zuletzt
   angesehene Monat des Vivendi-Accounts), 5 Monate in der Vergangenheit - der Sync fand
-  dadurch 0 passende Schichten im Sync-Fenster. Deshalb navigiert der Code jetzt vor dem
-  Export per Pfeil-Buttons zum aktuellen Monat (siehe _go_to_current_month unten) - diese
-  Selektoren sind noch NICHT live verifiziert (naechster Testlauf zeigt es).
+  dadurch 0 passende Schichten im Sync-Fenster. Deshalb navigiert der Code vor jedem Export
+  per Pfeil-Buttons zum gewuenschten Monat (siehe _go_to_month unten) - Selektoren per
+  HTML-Dump verifiziert (aria-label "Monat Vor"/"Monat Zurück"), vierter Testlauf erfolgreich
+  (18 Termine synchronisiert).
+- ERWEITERT (30.07.2026, vom Nutzer bestaetigt): Vivendi veroeffentlicht den Folgemonat
+  jeweils am 15./16. des Vormonats. download_dienstplan exportiert deshalb ab dem 17. zwei
+  Monate (aktueller + Folgemonat) statt nur einen, in derselben Browser-Sitzung nacheinander
+  (kein zweiter Login). Siehe main.py fuer die Datums-Schwelle.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from datetime import date as _dt_date
 
 from playwright.sync_api import Page, sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -84,8 +90,8 @@ _MONATE = {
 }
 
 
-def _go_to_current_month(page: Page) -> None:
-    """Navigiert die Kalenderansicht per Pfeil-Buttons zum aktuellen Monat.
+def _go_to_month(page: Page, target_year: int, target_month: int) -> None:
+    """Navigiert die Kalenderansicht per Pfeil-Buttons zum angegebenen Monat.
 
     Noetig, weil der Export sich auf den GERADE ANGEZEIGTEN Monat bezieht, nicht automatisch
     auf den aktuellen (echt beobachtet 30.07.2026: Ansicht zeigte beim Laden "Februar 2026",
@@ -99,9 +105,8 @@ def _go_to_current_month(page: Page) -> None:
     zu klicken.
     """
     import re
-    from datetime import date as _date
 
-    target = (date_today := _date.today()).year, date_today.month
+    target = (target_year, target_month)
     heading = page.locator(".cx-calendar-date-select__date-label").first
     next_button = page.get_by_role("button", name="Monat Vor")
     prev_button = page.get_by_role("button", name="Monat Zurück")
@@ -127,7 +132,18 @@ def _go_to_current_month(page: Page) -> None:
             return
         (next_button if current < target else prev_button).click()
         page.wait_for_timeout(500)
-    _LOGGER.warning("Aktueller Monat nach 36 Klicks nicht erreicht, breche Navigation ab")
+    _LOGGER.warning("Zielmonat nach 36 Klicks nicht erreicht, breche Navigation ab")
+
+
+def _export_excel(page: Page, target_path: str) -> None:
+    """Klickt den "Export"-Button der Kalenderansicht, waehlt "Excel" und speichert den
+    Download unter target_path. Setzt voraus, dass die Kalenderansicht bereits den
+    gewuenschten Monat zeigt.
+    """
+    page.get_by_role("button", name="Export").click()
+    with page.expect_download(timeout=30000) as download_info:
+        page.get_by_text("Excel", exact=False).click()
+    download_info.value.save_as(target_path)
 
 
 class VivendiLoginError(Exception):
@@ -138,9 +154,16 @@ class VivendiExportError(Exception):
     """Login war ok, aber der Export-Download ist fehlgeschlagen."""
 
 
-def download_dienstplan(login_url: str, username: str, password: str, target_path: str) -> str:
-    """Loggt sich ein, laedt den aktuellen Dienstplan-Export herunter und speichert ihn
-    unter target_path. Gibt target_path zurueck.
+def download_dienstplan(login_url: str, username: str, password: str, target_paths: list[str]) -> list[str]:
+    """Loggt sich einmal ein und exportiert der Reihe nach len(target_paths) aufeinanderfolgende
+    Monate, beginnend beim aktuellen Monat: target_paths[0] = aktueller Monat, target_paths[1]
+    = Folgemonat, usw. Gibt target_paths unveraendert zurueck (Erfolgsbestaetigung).
+
+    Hintergrund (vom Nutzer bestaetigt, 30.07.2026): Vivendi veroeffentlicht den Dienstplan
+    fuer den Folgemonat jeweils am 15. oder 16. des Vormonats. Ab dem 17. soll der Folgemonat
+    deshalb automatisch mit importiert werden (siehe main.py, NEXT_MONTH_AVAILABLE_FROM_DAY) -
+    diese Funktion selbst weiss nichts von diesem Datum, sie exportiert einfach so viele
+    aufeinanderfolgende Monate wie target_paths lang ist.
 
     Wirft VivendiLoginError bzw. VivendiExportError bei Fehlern.
     """
@@ -197,21 +220,27 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             _debug_shot(page, "03_kalender", html=True)
 
             # Export bezieht sich auf den angezeigten Monat, nicht automatisch auf den
-            # aktuellen (siehe Modul-Docstring) - deshalb zuerst dorthin navigieren.
-            _go_to_current_month(page)
-            _debug_shot(page, "03b_aktueller_monat")
+            # aktuellen (siehe Modul-Docstring) - deshalb zuerst dorthin navigieren, dann fuer
+            # jeden weiteren gewuenschten Monat einmal "Monat Vor" klicken und erneut
+            # exportieren, alles in derselben Browser-Sitzung (kein erneuter Login noetig).
+            today = _dt_date.today()
+            year, month = today.year, today.month
+            for i, target_path in enumerate(target_paths):
+                if i == 0:
+                    _go_to_month(page, year, month)
+                else:
+                    month += 1
+                    if month == 13:
+                        month = 1
+                        year += 1
+                    _go_to_month(page, year, month)
+                _debug_shot(page, f"03b_monat_{i}")
 
-            # Kalenderansicht hat oben links einen direkt beschrifteten "Export"-Button
-            # (Dropdown-Menu-Trigger, kein Drei-Punkte-Menu, siehe Modul-Docstring). Ein Klick
-            # darauf oeffnet das Menu mit den Export-Formaten.
-            page.get_by_role("button", name="Export").click()
-            _debug_shot(page, "04_export_menu")
-
-            with page.expect_download(timeout=30000) as download_info:
-                page.get_by_text("Excel", exact=False).click()
-            download = download_info.value
-            download.save_as(target_path)
-            _debug_shot(page, "06_download_fertig")
+                # Kalenderansicht hat oben links einen direkt beschrifteten "Export"-Button
+                # (Dropdown-Menu-Trigger, kein Drei-Punkte-Menu, siehe Modul-Docstring). Ein
+                # Klick darauf oeffnet das Menu mit den Export-Formaten.
+                _export_excel(page, target_path)
+                _debug_shot(page, f"06_download_fertig_{i}")
         except PlaywrightTimeoutError as exc:
             _debug_shot(page, "99_export_timeout")
             raise VivendiExportError(
@@ -223,4 +252,4 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
         finally:
             browser.close()
 
-    return target_path
+    return target_paths
