@@ -97,7 +97,11 @@ def sync_once(options: dict) -> None:
             notify_info(
                 "Dienstplan-Sync: ICS-Kalender-URL bereit",
                 f"Einmalig in Google Kalender eintragen unter 'Weitere Kalender' -> "
-                f"'Von URL': {ics_url}",
+                f"'Von URL': {ics_url}. WICHTIG: Diesen Kalender (heisst 'Dienstplan "
+                f"(Backup, ICS-Abo)') danach in der Kalenderliste ausgeblendet lassen, sonst "
+                f"siehst du jede Schicht doppelt (er laeuft parallel zum normalen "
+                f"'Dienstplan'-Kalender). Nur bei Bedarf einblenden, z.B. falls der normale "
+                f"Kalender mal nicht aktualisiert wird.",
                 notification_id="dienstplan_sync_ics_url",
             )
     except Exception:  # noqa: BLE001 - darf den erfolgreichen Haupt-Sync nie gefaehrden

@@ -126,7 +126,12 @@ def write_ics(shifts: list[Shift]) -> tuple[str, bool]:
         "PRODID:-//dienstplan_sync//DE",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        "X-WR-CALNAME:Dienstplan",
+        # Bewusst NICHT "Dienstplan" (wie der Google-API-Kalender) - Google fuehrt ICS-
+        # Kalender-Abos immer als eigenstaendigen, separaten Kalender, gleicht sie NICHT mit
+        # bestehenden Kalendern ab. Bei identischem Namen waeren beide in der Kalenderliste
+        # kaum unterscheidbar und liessen sich leicht versehentlich beide gleichzeitig
+        # einblenden -> jede Schicht doppelt sichtbar (Nutzerfrage 30.07.2026).
+        "X-WR-CALNAME:Dienstplan (Backup, ICS-Abo)",
     ]
     for shift in shifts:
         lines.extend(_event_to_vevent(shift))
