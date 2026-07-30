@@ -16,13 +16,14 @@ RECHERCHE-STAND (29.07.2026, per HTML/JS-Analyse ohne Zugangsdaten zu verwenden)
 - Es gibt zusaetzlich "Mit Windows Benutzer anmelden" und "Microsoft Entra anmelden" als
   alternative Login-Wege - fuer dieses Add-on nicht relevant (Spec sagt: normales
   Formular-Login, kein 2FA sichtbar).
-- Navigation zum Export (vom Nutzer beschrieben, 29.07.2026 - noch nicht live verifiziert,
-  da Chromium in der aktuellen Entwicklungsumgebung nicht ausfuehrbar ist, siehe README):
-  nach dem Login mittig auf "Kalender anzeigen", dann oben rechts auf das Drei-Punkte-Menu,
-  dort "Export" -> "Excel" auswaehlen. Die genauen Element-Selektoren fuer das
-  Drei-Punkte-Menu und den Excel-Menuepunkt sind Bestwissen (ueblicherweise Material-Icon-
-  Buttons ohne sichtbaren Text) - beim ersten echten Testlauf (Schritt 9/10) unbedingt mit
-  PLAYWRIGHT_DEBUG_SCREENSHOTS=1 (siehe unten) gegenpruefen und ggf. anpassen.
+- Navigation zum Export: erster echter Testlauf (30.07.2026, mit Debug-Screenshots) zeigte,
+  dass die urspruenglich vom Nutzer aus dem Gedaechtnis beschriebenen Schritte ("Kalender
+  anzeigen" zuerst) nicht zur echten Startseite passten - dieser Text kommt dort gar nicht
+  vor. Tatsaechlich fuehrt ein Lesezeichen "Dienstplan" im Bereich "Lesezeichen" der
+  Startseite direkt weiter. Zusaetzlich zeigte die Startseite ein "Browser is out-of-date"-
+  Banner, das vorsichtshalber weggeklickt wird. Der Rest der Kette (Drei-Punkte-Menu ->
+  "Export" -> "Excel") ist weiterhin Bestwissen und noch nicht verifiziert - naechster
+  Testlauf mit debug_screenshots muss das bestaetigen oder korrigieren.
 """
 
 from __future__ import annotations
@@ -111,11 +112,24 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
                 "hat sich die Seitenstruktur geaendert?"
             ) from exc
 
+        # "Browser is out-of-date"-Banner der Startseite schliessen, falls vorhanden (echter
+        # Testlauf 30.07.2026 zeigte es zuverlaessig oben ueber der ganzen Seite an - koennte
+        # spaetere Klicks ueberlagern). Rein defensiv, bricht bei Nichtvorhandensein nicht ab.
         try:
-            # Schritte laut Nutzerbeschreibung (29.07.2026): "Kalender anzeigen" -> Drei-
-            # Punkte-Menu oben rechts -> "Export" -> "Excel". Selektoren fuer Menu/Excel sind
-            # Bestwissen, siehe Modul-Docstring - beim ersten Testlauf gegenpruefen.
-            page.get_by_text("Kalender anzeigen").click()
+            page.locator("button, [role=button]").filter(has_text="×").first.click(timeout=3000)
+        except PlaywrightTimeoutError:
+            pass
+
+        try:
+            # KORRIGIERT (30.07.2026, nach echtem Testlauf mit Debug-Screenshots): Die vom
+            # Nutzer aus dem Gedaechtnis beschriebenen Schritte ("Kalender anzeigen" -> Drei-
+            # Punkte-Menu -> Export -> Excel) passten nicht zur echten Startseite - "Kalender
+            # anzeigen" kommt dort gar nicht vor. Tatsaechlich vorhanden: ein Lesezeichen
+            # "Dienstplan" im Bereich "Lesezeichen" auf der Startseite (Screenshot
+            # 99_export_timeout.png), das direkt zur Dienstplan-Ansicht fuehrt. Der Rest der
+            # Kette (Drei-Punkte-Menu -> Export -> Excel) ist noch unverifiziert - Bestwissen,
+            # siehe Modul-Docstring, muss beim naechsten Testlauf gegengeprueft werden.
+            page.get_by_text("Dienstplan", exact=True).first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
             _debug_shot(page, "03_kalender")
 
