@@ -16,14 +16,18 @@ RECHERCHE-STAND (29.07.2026, per HTML/JS-Analyse ohne Zugangsdaten zu verwenden)
 - Es gibt zusaetzlich "Mit Windows Benutzer anmelden" und "Microsoft Entra anmelden" als
   alternative Login-Wege - fuer dieses Add-on nicht relevant (Spec sagt: normales
   Formular-Login, kein 2FA sichtbar).
-- Navigation zum Export: erster echter Testlauf (30.07.2026, mit Debug-Screenshots) zeigte,
-  dass die urspruenglich vom Nutzer aus dem Gedaechtnis beschriebenen Schritte ("Kalender
-  anzeigen" zuerst) nicht zur echten Startseite passten - dieser Text kommt dort gar nicht
-  vor. Tatsaechlich fuehrt ein Lesezeichen "Dienstplan" im Bereich "Lesezeichen" der
-  Startseite direkt weiter. Zusaetzlich zeigte die Startseite ein "Browser is out-of-date"-
-  Banner, das vorsichtshalber weggeklickt wird. Der Rest der Kette (Drei-Punkte-Menu ->
-  "Export" -> "Excel") ist weiterhin Bestwissen und noch nicht verifiziert - naechster
-  Testlauf mit debug_screenshots muss das bestaetigen oder korrigieren.
+- Navigation zum Export: zwei echte Testlaeufe (30.07.2026, mit Debug-Screenshots) haben die
+  Kette vollstaendig verifiziert und korrigiert. Tatsaechlicher Ablauf: Startseite ->
+  Lesezeichen "Dienstplan" (nicht "Kalender anzeigen", das kommt nirgends vor) -> Kalender-
+  ansicht mit einem direkt beschrifteten "Export"-Button oben links (kein Drei-Punkte-Menu) ->
+  Klick oeffnet ein Dropdown mit "Excel" als Option -> Download startet.
+- WICHTIGER BEFUND (2. Testlauf, 30.07.2026): Der Export bezieht sich auf den GERADE
+  ANGEZEIGTEN Monat der Kalenderansicht, nicht automatisch auf den aktuellen Monat. Beim
+  Testlauf zeigte die Ansicht beim ersten Laden "Februar 2026" (vermutlich der zuletzt
+  angesehene Monat des Vivendi-Accounts), 5 Monate in der Vergangenheit - der Sync fand
+  dadurch 0 passende Schichten im Sync-Fenster. Deshalb navigiert der Code jetzt vor dem
+  Export per Pfeil-Buttons zum aktuellen Monat (siehe _go_to_current_month unten) - diese
+  Selektoren sind noch NICHT live verifiziert (naechster Testlauf zeigt es).
 """
 
 from __future__ import annotations
@@ -63,6 +67,57 @@ def _debug_shot(page: Page, name: str) -> None:
         _LOGGER.debug("Debug-Screenshot gespeichert: %s", path)
     except Exception:  # noqa: BLE001 - Screenshot ist nur Debug-Hilfe, darf nie den Lauf abbrechen
         _LOGGER.exception("Debug-Screenshot fehlgeschlagen (%s)", name)
+
+
+_MONATE = {
+    "januar": 1, "februar": 2, "märz": 3, "april": 4, "mai": 5, "juni": 6,
+    "juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+}
+
+
+def _go_to_current_month(page: Page) -> None:
+    """Navigiert die Kalenderansicht per Pfeil-Buttons zum aktuellen Monat.
+
+    Noetig, weil der Export sich auf den GERADE ANGEZEIGTEN Monat bezieht, nicht automatisch
+    auf den aktuellen (echt beobachtet 30.07.2026: Ansicht zeigte beim Laden "Februar 2026",
+    5 Monate in der Vergangenheit, wodurch der Sync 0 Treffer im Sync-Fenster fand). Noch NICHT
+    live verifiziert - mehrere Fallback-Selektoren fuer die Pfeil-Buttons, analog zum
+    urspruenglichen (und dann korrigierten) Drei-Punkte-Menu-Versuch. Bricht defensiv ab,
+    wenn die Monatsueberschrift nicht erkannt wird, statt endlos zu klicken.
+    """
+    import re
+    from datetime import date as _date
+
+    target = (date_today := _date.today()).year, date_today.month
+    heading = page.locator("text=/^[A-Za-zäöüÄÖÜ]+ \\d{4}$/").first
+    next_button = page.get_by_role("button", name=re.compile("nächst|weiter|next", re.I)).or_(
+        page.locator("button:has(mat-icon:text('chevron_right'))")
+    ).or_(
+        page.locator("button:has(mat-icon:text('navigate_next'))")
+    ).first
+    prev_button = page.get_by_role("button", name=re.compile("vorherig|zurück|previous", re.I)).or_(
+        page.locator("button:has(mat-icon:text('chevron_left'))")
+    ).or_(
+        page.locator("button:has(mat-icon:text('navigate_before'))")
+    ).first
+
+    for _ in range(36):  # Sicherheitsgrenze: max. 3 Jahre Differenz, verhindert Endlosschleife
+        heading_text = (heading.text_content(timeout=5000) or "").strip()
+        match = re.match(r"([A-Za-zäöüÄÖÜ]+)\s+(\d{4})", heading_text)
+        if not match:
+            _LOGGER.warning("Monats-Ueberschrift nicht erkannt (%r), Navigation abgebrochen", heading_text)
+            return
+        current_month = _MONATE.get(match.group(1).lower())
+        current_year = int(match.group(2))
+        if current_month is None:
+            _LOGGER.warning("Unbekannter Monatsname %r, Navigation abgebrochen", match.group(1))
+            return
+        current = (current_year, current_month)
+        if current == target:
+            return
+        (next_button if current < target else prev_button).click()
+        page.wait_for_timeout(500)
+    _LOGGER.warning("Aktueller Monat nach 36 Klicks nicht erreicht, breche Navigation ab")
 
 
 class VivendiLoginError(Exception):
@@ -125,19 +180,20 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             # Nutzer aus dem Gedaechtnis beschriebenen Schritte ("Kalender anzeigen" -> Drei-
             # Punkte-Menu -> Export -> Excel) passten nicht zur echten Startseite - "Kalender
             # anzeigen" kommt dort gar nicht vor. Tatsaechlich vorhanden: ein Lesezeichen
-            # "Dienstplan" im Bereich "Lesezeichen" auf der Startseite (Screenshot
-            # 99_export_timeout.png), das direkt zur Dienstplan-Ansicht fuehrt. Der Rest der
-            # Kette (Drei-Punkte-Menu -> Export -> Excel) ist noch unverifiziert - Bestwissen,
-            # siehe Modul-Docstring, muss beim naechsten Testlauf gegengeprueft werden.
+            # "Dienstplan" im Bereich "Lesezeichen" auf der Startseite, das direkt zur
+            # Dienstplan-Ansicht fuehrt (siehe Modul-Docstring, beide Testlaeufe 30.07.2026).
             page.get_by_text("Dienstplan", exact=True).first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
             _debug_shot(page, "03_kalender")
 
-            # KORRIGIERT (30.07.2026, zweiter Testlauf): kein Drei-Punkte-Menu vorhanden - die
+            # Export bezieht sich auf den angezeigten Monat, nicht automatisch auf den
+            # aktuellen (siehe Modul-Docstring) - deshalb zuerst dorthin navigieren.
+            _go_to_current_month(page)
+            _debug_shot(page, "03b_aktueller_monat")
+
             # Kalenderansicht hat oben links einen direkt beschrifteten "Export"-Button
-            # (Dropdown-Menu-Trigger, Material-Style-Pfeil daneben), siehe Screenshot
-            # 99_export_timeout.png dieses Laufs. Ein Klick direkt darauf oeffnet das Menu mit
-            # den Export-Formaten.
+            # (Dropdown-Menu-Trigger, kein Drei-Punkte-Menu, siehe Modul-Docstring). Ein Klick
+            # darauf oeffnet das Menu mit den Export-Formaten.
             page.get_by_role("button", name="Export").click()
             _debug_shot(page, "04_export_menu")
 
