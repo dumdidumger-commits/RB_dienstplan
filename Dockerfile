@@ -2,7 +2,7 @@
 # Vergangenheit bei diesem Nutzer schon zu kaputten pip-Installationen gefuehrt (siehe
 # Anmerkung in README). Debian-slim ist etwas groesser, aber deutlich weniger fehleranfaellig
 # fuer pandas/openpyxl/google-api-python-client, die alle C-Extensions mitbringen.
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
