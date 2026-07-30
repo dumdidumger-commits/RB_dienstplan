@@ -57,7 +57,7 @@ LOGIN_URL = "https://vivendiselfservice.johanniter.de:8755/areas/login/#/login"
 _DEBUG_DIR = "/share/dienstplan_sync/debug"
 
 
-def _debug_shot(page: Page, name: str) -> None:
+def _debug_shot(page: Page, name: str, html: bool = False) -> None:
     if os.environ.get("DIENSTPLAN_SYNC_DEBUG") != "1":
         return
     os.makedirs(_DEBUG_DIR, exist_ok=True)
@@ -67,6 +67,15 @@ def _debug_shot(page: Page, name: str) -> None:
         _LOGGER.debug("Debug-Screenshot gespeichert: %s", path)
     except Exception:  # noqa: BLE001 - Screenshot ist nur Debug-Hilfe, darf nie den Lauf abbrechen
         _LOGGER.exception("Debug-Screenshot fehlgeschlagen (%s)", name)
+    if html:
+        # Zusaetzlich echtes HTML sichern statt nur Screenshot - noetig, wenn ein Text-basierter
+        # Selektor unerwartet nicht greift (z.B. Monat/Jahr in getrennten Elementen statt einem
+        # zusammenhaengenden Textknoten) und das reine Bild die DOM-Struktur nicht zeigt.
+        try:
+            with open(f"{_DEBUG_DIR}/{name}.html", "w", encoding="utf-8") as f:
+                f.write(page.content())
+        except Exception:  # noqa: BLE001 - auch hier: darf den Lauf nie abbrechen
+            _LOGGER.exception("Debug-HTML fehlgeschlagen (%s)", name)
 
 
 _MONATE = {
@@ -102,7 +111,12 @@ def _go_to_current_month(page: Page) -> None:
     ).first
 
     for _ in range(36):  # Sicherheitsgrenze: max. 3 Jahre Differenz, verhindert Endlosschleife
-        heading_text = (heading.text_content(timeout=5000) or "").strip()
+        try:
+            heading_text = (heading.text_content(timeout=5000) or "").strip()
+        except PlaywrightTimeoutError:
+            _LOGGER.warning("Monats-Ueberschrift nicht gefunden, Navigation abgebrochen - "
+                             "Export bezieht sich dann auf den zufaellig angezeigten Monat")
+            return
         match = re.match(r"([A-Za-zäöüÄÖÜ]+)\s+(\d{4})", heading_text)
         if not match:
             _LOGGER.warning("Monats-Ueberschrift nicht erkannt (%r), Navigation abgebrochen", heading_text)
@@ -184,7 +198,7 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             # Dienstplan-Ansicht fuehrt (siehe Modul-Docstring, beide Testlaeufe 30.07.2026).
             page.get_by_text("Dienstplan", exact=True).first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
-            _debug_shot(page, "03_kalender")
+            _debug_shot(page, "03_kalender", html=True)
 
             # Export bezieht sich auf den angezeigten Monat, nicht automatisch auf den
             # aktuellen (siehe Modul-Docstring) - deshalb zuerst dorthin navigieren.
