@@ -38,10 +38,13 @@ LOGIN_URL = "https://vivendiselfservice.johanniter.de:8755/areas/login/#/login"
 
 # Bei Bedarf DIENSTPLAN_SYNC_DEBUG=1 in den Add-on-Optionen/der Umgebung setzen (oder beim
 # manuellen Testlauf exportieren): speichert nach jedem Navigationsschritt einen Screenshot
-# unter /data/debug/ - sehr hilfreich, um die noch unverifizierten Selektoren fuer das
-# Drei-Punkte-Menu/Excel-Export beim ersten echten Testlauf nachzujustieren.
+# unter /share/dienstplan_sync/debug/ - sehr hilfreich, um die noch unverifizierten Selektoren
+# fuer das Drei-Punkte-Menu/Excel-Export beim ersten echten Testlauf nachzujustieren.
+# Bewusst unter /share statt /data: /share ist von aussen (Samba, File-Editor-Add-on, andere
+# Add-ons mit share:rw) einsehbar, /data ist der private, isolierte Datenbereich dieses
+# Add-ons und von aussen nicht erreichbar.
 _DEBUG = os.environ.get("DIENSTPLAN_SYNC_DEBUG") == "1"
-_DEBUG_DIR = "/data/debug"
+_DEBUG_DIR = "/share/dienstplan_sync/debug"
 
 
 def _debug_shot(page: Page, name: str) -> None:
@@ -137,7 +140,7 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
                 "Navigation zum Export oder Download nicht innerhalb des Zeitlimits "
                 "abgeschlossen - vermutlich muessen die Selektoren fuer Drei-Punkte-Menu/"
                 "Export/Excel nachjustiert werden (DIENSTPLAN_SYNC_DEBUG=1 setzen und "
-                "Screenshots unter /data/debug/ pruefen)."
+                "Screenshots unter /share/dienstplan_sync/debug/ pruefen)."
             ) from exc
         finally:
             browser.close()

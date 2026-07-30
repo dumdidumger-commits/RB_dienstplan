@@ -81,7 +81,7 @@ def main() -> None:
     setup_logging(options.get("log_level", "info"))
     if options.get("debug_screenshots"):
         os.environ["DIENSTPLAN_SYNC_DEBUG"] = "1"
-        _LOGGER.info("Debug-Screenshots aktiviert, werden unter /data/debug/ gespeichert")
+        _LOGGER.info("Debug-Screenshots aktiviert, werden unter /share/dienstplan_sync/debug/ gespeichert")
 
     _LOGGER.info("Dienstplan-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "06:00"))
 

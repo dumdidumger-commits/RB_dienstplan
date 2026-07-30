@@ -42,7 +42,8 @@ Code dafuer stand.
 
 **Debug-Hilfe fuer den ersten echten Testlauf:** Add-on-Option `debug_screenshots: true`
 setzen - dann speichert `vivendi.py` nach jedem Navigationsschritt (Login, "Kalender
-anzeigen", Drei-Punkte-Menu, Export-Menu, Download) einen Screenshot unter `/data/debug/`.
+anzeigen", Drei-Punkte-Menu, Export-Menu, Download) einen Screenshot unter
+`/share/dienstplan_sync/debug/`.
 Damit laesst sich sofort sehen, an welcher Stelle die (noch unverifizierten) Selektoren
 fuer Drei-Punkte-Menu/Excel-Auswahl ggf. angepasst werden muessen.
 
