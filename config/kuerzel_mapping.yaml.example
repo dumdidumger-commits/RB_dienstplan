@@ -17,13 +17,25 @@
 #   - null (= "kein Kalendereintrag", z.B. freie Tage)
 #
 # "SF" und "TB" vom Nutzer bestaetigt (2026-07-30): SF = Sonderfunktion, TB = Teambesprechung.
+# "Ut" vom Nutzer bestaetigt (30.07.2026, nach 1. echtem Testlauf): Urlaubstag.
+# "U2" und "kfE" (30.07.2026): Bedeutung dem Nutzer selbst gerade nicht bekannt - auf
+# ausdruecklichen Wunsch 1:1 mit dem Kuerzel als Bezeichnung uebernommen (inkl. Uhrzeiten, falls
+# im Export welche stehen - das macht calendar_sync.py automatisch fuer jeden Eintrag mit
+# Start/Ende). Bei Gelegenheit hier durch die echte Bezeichnung ersetzen.
+# "" (leerer Code, ebenfalls im 1. Testlauf aufgefallen): wie "/" als "kein Kalendereintrag"
+# behandelt statt als unbekannt zu loggen - ein leerer Ist-Code bedeutet vermutlich dasselbe
+# wie ein freier Tag.
 
 exact:
   "!": null          # gesonderter Vermerk - laut Spezifikation kein Kalendereintrag, wird aber geloggt
   "/": null           # frei
+  "": null            # leerer Code - wie "/" behandelt
   "BB": "Bewohnerbesprechung"
   "TB": "Teambesprechung"
   "SF": "Sonderfunktion"
+  "Ut": "Urlaubstag"
+  "U2": "U2"          # Bedeutung noch offen, bewusst 1:1 uebernommen
+  "kfE": "kfE"         # Bedeutung noch offen, bewusst 1:1 uebernommen
 
 prefix:
   "F": "Fruehschicht"
