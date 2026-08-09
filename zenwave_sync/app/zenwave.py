@@ -123,25 +123,23 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 "button:has-text('Weiter')"
             ).first
             password_submit.click()
-            # Erster Versuch pruefte direkt nach "networkidle", ob noch ein Passwortfeld da
-            # ist - Debug-Screenshot vom 09.08.2026 zeigte aber, dass der Login zu dem
-            # Zeitpunkt schon erfolgreich war ("Sicher eingeloggt."-Toast sichtbar), nur die
-            # Weiterleitung/Ausblend-Animation des Formulars war noch nicht fertig. Deshalb
-            # jetzt: explizit warten, bis das Passwortfeld verschwindet (bis zu 15s), statt nur
-            # einmal kurz nach dem Zufallszeitpunkt von "networkidle" zu schauen.
+            # Zwei vorige Versuche pruefte per Abwesenheit des Passwortfelds - Debug-
+            # Screenshots vom 09.08.2026 zeigten aber wiederholt, dass der Login zu dem
+            # Zeitpunkt schon erfolgreich war ("Sicher eingeloggt."-Toast sichtbar), die Seite
+            # aber noch zwischen Login-Formular und Dashboard haengt (Ladespinner). Eine reine
+            # Abwesenheitspruefung ist hier zu anfaellig fuer diesen Zwischenzustand - deshalb
+            # jetzt direkt auf ein positives Erfolgsmerkmal warten (die "Verbrauch"-Navigation),
+            # statt auf das Fehlen des Passwortfelds zu schliessen.
             try:
-                page.locator("input[type=password]").first.wait_for(state="hidden", timeout=15000)
-            except Exception:
-                pass  # unten folgt die eigentliche, verlaessliche Fehlerpruefung
-            page.wait_for_load_state("networkidle", timeout=30000)
-            _debug_shot(page, "05_nach_login", html=True)
-
-            if page.locator("input[type=password]").count() > 0:
-                _debug_shot(page, "05b_login_vermutlich_fehlgeschlagen")
+                page.locator("text=Verbrauch").first.wait_for(state="visible", timeout=25000)
+            except Exception as exc:
+                _debug_shot(page, "05b_login_vermutlich_fehlgeschlagen", html=True)
                 raise ZenwaveLoginError(
-                    "Nach dem Absenden des Passwort-Formulars ist weiterhin ein Passwortfeld "
-                    "sichtbar - Login vermutlich fehlgeschlagen. Siehe Debug-Screenshots."
-                )
+                    "Nach dem Absenden des Passwort-Formulars ist innerhalb von 25s keine "
+                    "'Verbrauch'-Navigation erschienen - Login vermutlich fehlgeschlagen. "
+                    "Siehe Debug-Screenshots."
+                ) from exc
+            _debug_shot(page, "05_nach_login", html=True)
 
             verbrauch_tab = page.locator("text=Verbrauch").first
             verbrauch_tab.click()
