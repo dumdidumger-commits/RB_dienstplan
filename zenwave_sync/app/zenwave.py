@@ -141,12 +141,14 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 ) from exc
             _debug_shot(page, "05_nach_login", html=True)
 
+            # "networkidle" erwies sich hier als unzuverlaessig (SPA haelt vermutlich
+            # dauerhaft Hintergrundverbindungen offen - Websocket-Heartbeat, Analytics - daher
+            # loest "idle" nie aus, 30s-Timeout). Stattdessen direkt auf das naechste konkrete
+            # Element warten, das wir sowieso brauchen ("INTERVALLDATEN"-Karte).
             verbrauch_tab = page.locator("text=Verbrauch").first
             verbrauch_tab.click()
-            page.wait_for_load_state("networkidle", timeout=30000)
+            page.locator("text=INTERVALLDATEN").first.wait_for(state="visible", timeout=20000)
             _debug_shot(page, "06_verbrauch_tab", html=True)
-
-            page.locator("text=INTERVALLDATEN").first.wait_for(state="visible", timeout=15000)
             # Sucht das umschliessende Karten-Element ueber den gemeinsamen Vorfahren von
             # "INTERVALLDATEN" und "Variable Kosten" - robuster gegen wechselnde CSS-Klassen
             # als ein hartcodierter Selektor, siehe Modul-Docstring.
