@@ -7,7 +7,7 @@ z.B. MQTT - fuer drei simple Werte reicht das, keine zusaetzliche Abhaengigkeit 
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -137,8 +137,18 @@ def publish_intervalldaten(data: dict) -> None:
     bevor sie ihn statt der Shelly/Poweropti-Schaetzung anzeigen.
     """
     label = data.get("zeitraum_label") or "unbekannt"
+    # ISO-Datum zusaetzlich zum deutschen Label ("8 Aug.") - das Label selbst enthaelt kein
+    # Jahr und ist umstaendlich in Jinja/JS zu parsen. Die Intervalldaten-Karte zeigt beim
+    # Laden verlaesslich den Vortag (bisher an jedem Testlauf bestaetigt) - daher einfach
+    # "heute minus 1 Tag" zum Zeitpunkt dieses Sync-Laufs, statt das Label zu parsen. Wird von
+    # template.yaml (sensor.energieprognose_tag_netzbezug/_kosten) und app.html
+    # (renderVbTagSummary) genutzt, um zu erkennen, ob der gewaehlte Tag-Offset genau diesem
+    # Datum entspricht - nur dann werden die echten statt der geschaetzten Werte angezeigt
+    # (Rolands Wunsch 09.08.2026).
+    datum_iso = (datetime.now().date() - timedelta(days=1)).isoformat()
     common_attrs = {
         "zeitraum": label,
+        "datum": datum_iso,
         "status": data.get("status"),
         "quelle": "ZenWave-Kundenportal (Intervalldaten)",
     }
