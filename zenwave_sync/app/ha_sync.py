@@ -56,4 +56,40 @@ def publish_intervalldaten(data: dict) -> None:
         data.get("durchschnittspreis_ct_kwh"),
         {**common_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: realer Durchschnittspreis"},
     )
+
+    # "Strompreis"-Karte (Startseite, 09.08.2026 ergaenzt) - eigener Attribut-Satz ohne
+    # zeitraum/status, da diese Werte sich auf "jetzt" beziehen statt auf einen gewaehlten Tag.
+    preis_attrs = {"quelle": "ZenWave-Kundenportal (Strompreis-Karte)"}
+    _set_state(
+        "sensor.zenwave_preis_aktuell",
+        data.get("aktueller_preis_ct_kwh"),
+        {**preis_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: aktueller Strompreis"},
+    )
+    _set_state(
+        "sensor.zenwave_preis_durchschnitt",
+        data.get("strompreis_durchschnitt_ct_kwh"),
+        {**preis_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: Durchschnittspreis (Strompreis-Karte)"},
+    )
+    if data.get("boersenpreis_beschaffung_ct_kwh") is not None:
+        _set_state(
+            "sensor.zenwave_preis_boersenpreis_beschaffung",
+            data.get("boersenpreis_beschaffung_ct_kwh"),
+            {**preis_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: Preiskomponente Börsenpreis & Beschaffung"},
+        )
+        _set_state(
+            "sensor.zenwave_preis_netzentgelte",
+            data.get("netzentgelte_ct_kwh"),
+            {**preis_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: Preiskomponente Netzentgelte"},
+        )
+        _set_state(
+            "sensor.zenwave_preis_steuern_abgaben",
+            data.get("steuern_abgaben_ct_kwh"),
+            {**preis_attrs, "unit_of_measurement": "ct/kWh", "friendly_name": "ZenWave: Preiskomponente Steuern & Abgaben"},
+        )
+    else:
+        _LOGGER.warning(
+            "Preis-Komponenten (Börsenpreis/Netzentgelte/Steuern) nicht gefunden - "
+            "Detailbox auf der Strompreis-Karte vermutlich nicht wie erwartet sichtbar/geparst"
+        )
+
     _LOGGER.info("ZenWave-Sensoren aktualisiert fuer Zeitraum '%s' (Status: %s)", label, data.get("status"))

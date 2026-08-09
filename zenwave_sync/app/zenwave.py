@@ -72,6 +72,38 @@ def _parse_de_number(text: str) -> float | None:
     return float(match.group(0)) if match else None
 
 
+def _parse_strompreis_card(text: str) -> dict:
+    """Best-effort-Auslese der "Strompreis"-Karte auf der Startseite: Ø Preis, aktueller
+    Preis, und (falls die "Jetzt"-Detailbox sichtbar ist) die 3 Preiskomponenten.
+
+    Fragiler als die Intervalldaten-Auslese in fetch_intervalldaten(): die Komponentenwerte in
+    der Detailbox haben keine eigenen Inline-Labels (nur die Legende weiter unten in der
+    Karte) - die Reihenfolge wird deshalb anhand der aus Screenshots bekannten Legenden-
+    Reihenfolge angenommen (Börsenpreis & Beschaffung, Netzentgelte, Steuern & Abgaben). Bei
+    Bedarf nach Sichtung echter Auslesen (siehe raw_strompreis_text im Rueckgabewert von
+    fetch_intervalldaten) nachjustieren.
+    """
+    preis_pos = text.find("Ø Preis")
+    tail = text[preis_pos:] if preis_pos >= 0 else text
+    avg_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", tail)
+    aktuell_match = re.search(r"Aktuell[^\d]*([\d.,]+)\s*ct", tail)
+    # Detailbox-Zeile hat laut Screenshot die Form "21,19 ct/kWh  2,01  11,34  7,84"
+    # (Gesamtpreis mit Einheit, dann drei nackte Zahlen fuer die Komponenten)
+    detail_match = re.search(r"([\d.,]+)\s*ct/kWh\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)", tail)
+
+    return {
+        # Eigener Praefix "strompreis_" (statt "durchschnittspreis_ct_kwh" wie bei der
+        # Intervalldaten-Karte), da beide Karten je ein "Ø Preis"-Feld haben, aber mit
+        # unterschiedlichem Bezug (Intervalldaten: gewaehlter Tag: Strompreis-Karte: "Aktuell").
+        "strompreis_durchschnitt_ct_kwh": _parse_de_number(avg_match.group(1)) if avg_match else None,
+        "aktueller_preis_ct_kwh": _parse_de_number(aktuell_match.group(1)) if aktuell_match else None,
+        "boersenpreis_beschaffung_ct_kwh": _parse_de_number(detail_match.group(2)) if detail_match else None,
+        "netzentgelte_ct_kwh": _parse_de_number(detail_match.group(3)) if detail_match else None,
+        "steuern_abgaben_ct_kwh": _parse_de_number(detail_match.group(4)) if detail_match else None,
+        "raw_strompreis_text": text,
+    }
+
+
 def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
     """Loggt sich ein und liest die "Intervalldaten"-Karte im "Verbrauch"-Tab aus.
 
@@ -173,12 +205,17 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
             # Preis-Komponenten) ihre Daten laedt und dabei vom Netzwerk-Mitschnitt oben
             # erfasst wird, bevor wir zum "Verbrauch"-Tab weiterklicken (09.08.2026,
             # Nutzerwunsch: auch die Preisprognose/-struktur mit auslesen statt nur Verbrauch).
+            strompreis_data: dict = {}
             try:
                 page.locator("text=STROMPREIS").first.wait_for(state="visible", timeout=15000)
                 page.wait_for_timeout(3000)  # Chart-/API-Daten laden meist noch kurz nach
                 _debug_shot(page, "05b_startseite_strompreis", html=True)
+                strompreis_card = page.locator("text=STROMPREIS").first.locator(
+                    "xpath=ancestor::*[self::div][.//text()[contains(., 'Quelle: EPEX Spot')]]"
+                ).first
+                strompreis_data = _parse_strompreis_card(strompreis_card.inner_text())
             except Exception:
-                _LOGGER.warning("STROMPREIS-Karte auf der Startseite nicht gefunden (nicht fatal)")
+                _LOGGER.exception("STROMPREIS-Karte konnte nicht gelesen werden (nicht fatal)")
 
             # "networkidle" erwies sich hier als unzuverlaessig (SPA haelt vermutlich
             # dauerhaft Hintergrundverbindungen offen - Websocket-Heartbeat, Analytics - daher
@@ -211,6 +248,7 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 # Tag noch nicht bekannt, siehe Modul-Docstring.
                 "status": "unknown",
                 "raw_card_text": card_text,
+                **strompreis_data,
             }
             if result["verbrauch_kwh"] is None or result["kosten_eur"] is None:
                 _debug_shot(page, "99_parse_fehlgeschlagen", html=True)
