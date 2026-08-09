@@ -72,24 +72,38 @@ def _parse_de_number(text: str) -> float | None:
     return float(match.group(0)) if match else None
 
 
-def _parse_strompreis_card(text: str) -> dict:
-    """Best-effort-Auslese der "Strompreis"-Karte auf der Startseite: Ø Preis, aktueller
-    Preis, und (falls die "Jetzt"-Detailbox sichtbar ist) die 3 Preiskomponenten.
+def _labeled_ct_value(text: str, label: str) -> float | None:
+    """Sucht "<label>\\n<Zahl>ct/kWh" (echtes Format laut erstem Live-Auslesen 09.08.2026 -
+    KEIN Leerzeichen vor "ct/kWh", Label steht direkt vor dem Wert, kein Legenden-Rateversuch
+    mehr noetig)."""
+    m = re.search(re.escape(label) + r"\s*\n?\s*([\d.,]+)\s*ct/kWh", text)
+    return _parse_de_number(m.group(1)) if m else None
 
-    Fragiler als die Intervalldaten-Auslese in fetch_intervalldaten(): die Komponentenwerte in
-    der Detailbox haben keine eigenen Inline-Labels (nur die Legende weiter unten in der
-    Karte) - die Reihenfolge wird deshalb anhand der aus Screenshots bekannten Legenden-
-    Reihenfolge angenommen (Börsenpreis & Beschaffung, Netzentgelte, Steuern & Abgaben). Bei
-    Bedarf nach Sichtung echter Auslesen (siehe raw_strompreis_text im Rueckgabewert von
-    fetch_intervalldaten) nachjustieren.
+
+def _parse_strompreis_card(text: str) -> dict:
+    """Auslese der "Strompreis"-Karte auf der Startseite: Ø Preis, aktueller Preis, und (aus
+    der "Jetzt"-Detailbox) die 3 Preiskomponenten samt Zeitstempel des Intervalls.
+
+    Format live verifiziert (09.08.2026): "Steuern & Abgaben\\n7,83ct/kWh\\nNetzentgelte\\n
+    11,34ct/kWh\\nBörsenpreis & Beschaffung\\n1,92ct/kWh\\nGesamtpreis\\n21,09ct/kWh" - jeder
+    Wert hat sein eigenes Inline-Label direkt davor, kein Raten der Reihenfolge noetig.
+
+    Auffaellig beim Vergleich zweier Messungen am selben Tag (09:45 vs. 11:45 Uhr):
+    Netzentgelte war beide Male EXAKT 11,34 ct/kWh, Steuern & Abgaben praktisch identisch
+    (7,84 vs. 7,83). Nur "Börsenpreis & Beschaffung" aenderte sich (2,01 vs. 1,92) - passt zur
+    Erwartung, dass Netzentgelte/Steuern in Deutschland ueblicherweise feste Ct/kWh-Saetze
+    sind, waehrend nur die Beschaffungskomponente mit dem EPEX-Spotpreis schwankt. Falls sich
+    das bestaetigt, muss fuer eine volle 15-Min-Kurve NICHT jedes Intervall einzeln gescraped
+    werden - stattdessen reicht es, Netzentgelte+Steuern (aendern sich vermutlich nur sehr
+    selten) periodisch zu scrapen und mit dem ohnehin vorhandenen eigenen epex_spot-Sensor
+    (liefert alle 15-Min-Intervalle fuer heute+morgen) selbst zusammenzurechnen - siehe
+    project_zenwave_sync_planning Memory fuer den Stand dieser Untersuchung.
     """
     preis_pos = text.find("Ø Preis")
     tail = text[preis_pos:] if preis_pos >= 0 else text
     avg_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", tail)
     aktuell_match = re.search(r"Aktuell[^\d]*([\d.,]+)\s*ct", tail)
-    # Detailbox-Zeile hat laut Screenshot die Form "21,19 ct/kWh  2,01  11,34  7,84"
-    # (Gesamtpreis mit Einheit, dann drei nackte Zahlen fuer die Komponenten)
-    detail_match = re.search(r"([\d.,]+)\s*ct/kWh\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)", tail)
+    zeitpunkt_match = re.search(r"(\d{1,2}\.\s*\w+\.,\s*\d{2}:\d{2})", tail)
 
     return {
         # Eigener Praefix "strompreis_" (statt "durchschnittspreis_ct_kwh" wie bei der
@@ -97,9 +111,11 @@ def _parse_strompreis_card(text: str) -> dict:
         # unterschiedlichem Bezug (Intervalldaten: gewaehlter Tag: Strompreis-Karte: "Aktuell").
         "strompreis_durchschnitt_ct_kwh": _parse_de_number(avg_match.group(1)) if avg_match else None,
         "aktueller_preis_ct_kwh": _parse_de_number(aktuell_match.group(1)) if aktuell_match else None,
-        "boersenpreis_beschaffung_ct_kwh": _parse_de_number(detail_match.group(2)) if detail_match else None,
-        "netzentgelte_ct_kwh": _parse_de_number(detail_match.group(3)) if detail_match else None,
-        "steuern_abgaben_ct_kwh": _parse_de_number(detail_match.group(4)) if detail_match else None,
+        "intervall_zeitpunkt": zeitpunkt_match.group(1) if zeitpunkt_match else None,
+        "gesamtpreis_jetzt_ct_kwh": _labeled_ct_value(tail, "Gesamtpreis"),
+        "boersenpreis_beschaffung_ct_kwh": _labeled_ct_value(tail, "Börsenpreis & Beschaffung"),
+        "netzentgelte_ct_kwh": _labeled_ct_value(tail, "Netzentgelte"),
+        "steuern_abgaben_ct_kwh": _labeled_ct_value(tail, "Steuern & Abgaben"),
         "raw_strompreis_text": text,
     }
 
