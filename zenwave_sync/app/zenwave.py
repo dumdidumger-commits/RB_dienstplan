@@ -84,34 +84,59 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
             page.goto(login_url, wait_until="networkidle", timeout=30000)
             _debug_shot(page, "01_login_page", html=True)
 
+            # Zweistufiger Login (09.08.2026 per Debug-Screenshot bestaetigt, "powered by
+            # Nomos"-Auth): Schritt 1 zeigt NUR ein E-Mail-Feld, kein Passwort. Passwort (oder
+            # ggf. ein Einmalcode) kommt erst auf einer zweiten Seite - deshalb hier bewusst
+            # NICHT wie im ersten Entwurf beide Felder blind zusammen befuellen.
             email_field = page.locator(
                 "input[type=email], input[name*=mail i], input[autocomplete=username]"
             ).first
-            password_field = page.locator("input[type=password]").first
             email_field.wait_for(state="visible", timeout=15000)
             email_field.fill(username)
-            password_field.fill(password)
-            _debug_shot(page, "02_login_ausgefuellt")
+            _debug_shot(page, "02_email_ausgefuellt")
 
             submit_button = page.locator(
-                "button[type=submit], button:has-text('Anmelden'), "
-                "button:has-text('Einloggen'), button:has-text('Login')"
+                "button[type=submit], button:has-text('Einloggen'), "
+                "button:has-text('Anmelden'), button:has-text('Login'), "
+                "button:has-text('Weiter')"
             ).first
             submit_button.click()
             page.wait_for_load_state("networkidle", timeout=30000)
-            _debug_shot(page, "03_nach_login", html=True)
+            _debug_shot(page, "03_nach_email_schritt", html=True)
+
+            password_field = page.locator("input[type=password]").first
+            try:
+                password_field.wait_for(state="visible", timeout=15000)
+            except Exception as exc:
+                _debug_shot(page, "03b_kein_passwortfeld", html=True)
+                raise ZenwaveLoginError(
+                    "Nach der E-Mail-Eingabe erschien innerhalb von 15s kein Passwortfeld - "
+                    "moeglicherweise ein Einmalcode-/Magic-Link-Verfahren statt Passwort-Login. "
+                    "Siehe Debug-Screenshot 03_nach_email_schritt."
+                ) from exc
+            password_field.fill(password)
+            _debug_shot(page, "04_passwort_ausgefuellt")
+
+            password_submit = page.locator(
+                "button[type=submit], button:has-text('Einloggen'), "
+                "button:has-text('Anmelden'), button:has-text('Login'), "
+                "button:has-text('Weiter')"
+            ).first
+            password_submit.click()
+            page.wait_for_load_state("networkidle", timeout=30000)
+            _debug_shot(page, "05_nach_login", html=True)
 
             if page.locator("input[type=password]").count() > 0:
-                _debug_shot(page, "03b_login_vermutlich_fehlgeschlagen")
+                _debug_shot(page, "05b_login_vermutlich_fehlgeschlagen")
                 raise ZenwaveLoginError(
-                    "Nach dem Absenden des Login-Formulars ist weiterhin ein Passwortfeld "
+                    "Nach dem Absenden des Passwort-Formulars ist weiterhin ein Passwortfeld "
                     "sichtbar - Login vermutlich fehlgeschlagen. Siehe Debug-Screenshots."
                 )
 
             verbrauch_tab = page.locator("text=Verbrauch").first
             verbrauch_tab.click()
             page.wait_for_load_state("networkidle", timeout=30000)
-            _debug_shot(page, "04_verbrauch_tab", html=True)
+            _debug_shot(page, "06_verbrauch_tab", html=True)
 
             page.locator("text=INTERVALLDATEN").first.wait_for(state="visible", timeout=15000)
             # Sucht das umschliessende Karten-Element ueber den gemeinsamen Vorfahren von
@@ -121,7 +146,7 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 "xpath=ancestor::*[self::div][.//text()[contains(., 'Variable Kosten')]]"
             ).first
             card_text = card.inner_text()
-            _debug_shot(page, "05_intervalldaten_karte")
+            _debug_shot(page, "07_intervalldaten_karte")
 
             preis_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", card_text)
             verbrauch_match = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", card_text)
