@@ -27,6 +27,7 @@ Naechste Iteration (nach dem ersten echten Testlauf): Debug-Screenshots/HTML-Dum
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -80,6 +81,33 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
+
+        # Netzwerk-Mitschnitt (nur im Debug-Modus): SPAs laden Chart-/Preisdaten fast immer
+        # ueber eine JSON-API im Hintergrund - das ist viel robuster auszuwerten als ein
+        # SVG/Canvas-Chart optisch nachzubauen. Dient der Erkundung, WELCHE Endpunkte die
+        # "Strompreis"-Karte (naechste 24h, Preis-Komponenten) speist, bevor dafuer eigener
+        # Auslese-Code geschrieben wird.
+        api_log: list[dict] = []
+        if os.environ.get("ZENWAVE_SYNC_DEBUG") == "1":
+            def _log_api_response(response):
+                try:
+                    ctype = response.headers.get("content-type", "")
+                    if "application/json" not in ctype:
+                        return
+                    try:
+                        body = response.text()
+                    except Exception:
+                        body = None
+                    api_log.append({
+                        "url": response.url,
+                        "status": response.status,
+                        "method": response.request.method,
+                        "body": body[:20000] if body else None,
+                    })
+                except Exception:
+                    pass
+            page.on("response", _log_api_response)
+
         try:
             page.goto(login_url, wait_until="networkidle", timeout=30000)
             _debug_shot(page, "01_login_page", html=True)
@@ -141,6 +169,17 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 ) from exc
             _debug_shot(page, "05_nach_login", html=True)
 
+            # Kurz auf der Startseite bleiben, damit die "Strompreis"-Karte (naechste 24h,
+            # Preis-Komponenten) ihre Daten laedt und dabei vom Netzwerk-Mitschnitt oben
+            # erfasst wird, bevor wir zum "Verbrauch"-Tab weiterklicken (09.08.2026,
+            # Nutzerwunsch: auch die Preisprognose/-struktur mit auslesen statt nur Verbrauch).
+            try:
+                page.locator("text=STROMPREIS").first.wait_for(state="visible", timeout=15000)
+                page.wait_for_timeout(3000)  # Chart-/API-Daten laden meist noch kurz nach
+                _debug_shot(page, "05b_startseite_strompreis", html=True)
+            except Exception:
+                _LOGGER.warning("STROMPREIS-Karte auf der Startseite nicht gefunden (nicht fatal)")
+
             # "networkidle" erwies sich hier als unzuverlaessig (SPA haelt vermutlich
             # dauerhaft Hintergrundverbindungen offen - Websocket-Heartbeat, Analytics - daher
             # loest "idle" nie aus, 30s-Timeout). Stattdessen direkt auf das naechste konkrete
@@ -181,4 +220,12 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 )
             return result
         finally:
+            if api_log:
+                try:
+                    os.makedirs(_DEBUG_DIR, exist_ok=True)
+                    with open(f"{_DEBUG_DIR}/api_responses.json", "w", encoding="utf-8") as f:
+                        json.dump(api_log, f, ensure_ascii=False, indent=2)
+                    _LOGGER.info("%d API-Antworten mitgeschnitten -> %s/api_responses.json", len(api_log), _DEBUG_DIR)
+                except Exception:
+                    _LOGGER.exception("Konnte API-Mitschnitt nicht schreiben")
             browser.close()
