@@ -1,0 +1,35 @@
+name: "ZenWave Sync"
+version: "0.1.0"
+slug: "zenwave_sync"
+description: "Liest Verbrauch, Durchschnittspreis und variable Kosten aus dem ZenWave-Kundenportal (Zendure) aus, statt sie aus Shelly/Poweropti zu schaetzen"
+url: "https://github.com/dumdidumger-commits/RB_dienstplan"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+init: false
+startup: application
+boot: auto
+# Noetig fuer persistent_notification bei Fehlern (SUPERVISOR_TOKEN), gleiches Muster wie
+# beim Nachbar-Add-on "Vivendi Dienstplan Sync".
+homeassistant_api: true
+options:
+  zenwave_username: ""
+  zenwave_password: ""
+  zenwave_login_url: "https://zenwave.customerportal.energy/"
+  run_time: "07:00"
+  log_level: "info"
+  # Bewusst standardmaessig AN (anders als beim inzwischen eingespielten Vivendi-Add-on) -
+  # dieses Add-on ist noch in der Kennenlern-Phase, die ersten echten Laeufe brauchen die
+  # Screenshots, um die Login-/Auslese-Selektoren nachzujustieren. Nach ein paar erfolgreichen
+  # Laeufen auf false stellen.
+  debug_screenshots: true
+schema:
+  zenwave_username: str
+  zenwave_password: password
+  zenwave_login_url: url
+  run_time: match(^([0-1][0-9]|2[0-3]):[0-5][0-9]$)
+  log_level: list(debug|info|warning|error)
+  debug_screenshots: bool
+map:
+  - share:rw
