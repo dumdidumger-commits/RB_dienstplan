@@ -123,6 +123,16 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 "button:has-text('Weiter')"
             ).first
             password_submit.click()
+            # Erster Versuch pruefte direkt nach "networkidle", ob noch ein Passwortfeld da
+            # ist - Debug-Screenshot vom 09.08.2026 zeigte aber, dass der Login zu dem
+            # Zeitpunkt schon erfolgreich war ("Sicher eingeloggt."-Toast sichtbar), nur die
+            # Weiterleitung/Ausblend-Animation des Formulars war noch nicht fertig. Deshalb
+            # jetzt: explizit warten, bis das Passwortfeld verschwindet (bis zu 15s), statt nur
+            # einmal kurz nach dem Zufallszeitpunkt von "networkidle" zu schauen.
+            try:
+                page.locator("input[type=password]").first.wait_for(state="hidden", timeout=15000)
+            except Exception:
+                pass  # unten folgt die eigentliche, verlaessliche Fehlerpruefung
             page.wait_for_load_state("networkidle", timeout=30000)
             _debug_shot(page, "05_nach_login", html=True)
 
