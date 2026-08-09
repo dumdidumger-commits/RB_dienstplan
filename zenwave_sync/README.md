@@ -14,24 +14,30 @@ echten Abrechnung, vermutete Ursache verpasste Impulse bei niedriger Grundlast).
 zwischen zwei unsicheren lokalen Messungen zu kalibrieren, holt dieses Add-on die tatsächlich
 abgerechneten Werte direkt vom Anbieter.
 
-## Status (Stand 09.08.2026) — erster Entwurf, noch UNGETESTET
+## Status (Stand 09.08.2026, v0.1.4) — Login + Basis-Auslese live verifiziert
 
 | Schritt | Status |
 |---|---|
 | 1. Add-on-Grundgerüst (config.yaml, Dockerfile, requirements.txt) | ✅ fertig |
-| 2. Login-Mechanismus | ⚠️ erster Versuch, noch nicht gegen die echte Seite getestet |
-| 3. "Intervalldaten"-Karte auslesen (Ø Preis/Verbrauch/Variable Kosten) | ⚠️ erster Versuch |
-| 4. Status Final/Vorläufig/Ersatzwert für einen ganzen Tag erkennen | ❌ noch nicht geklärt, wie das im DOM abgebildet ist |
-| 5. "Zeitraum"-Dropdown für beliebige vergangene Tage bedienen | ❌ noch nicht geklärt - liest bisher nur den beim Laden default gezeigten Zeitraum |
-| 6. Anbindung an die Energieprognose-Tag-Sensoren (Offset ≤ -2 → echte statt geschätzte Werte) | ❌ noch offen |
+| 2. Login-Mechanismus (zweistufig: E-Mail → Passwort, "powered by Nomos") | ✅ live verifiziert, 4 Iterationen bis stabil (siehe unten) |
+| 3. "Intervalldaten"-Karte auslesen (Ø Preis/Verbrauch/Variable Kosten) | ✅ live verifiziert, liest den Default-Zeitraum (aktuell "gestern") |
+| 4. Sensoren nach HA schreiben (`sensor.zenwave_real_*`) | ✅ live verifiziert |
+| 5. Status Final/Vorläufig/Ersatzwert für einen ganzen Tag erkennen | ❌ noch nicht geklärt, wie das im DOM abgebildet ist - Attribut `status` liefert bisher immer `"unknown"` |
+| 6. "Zeitraum"-Dropdown für beliebige vergangene Tage bedienen | ❌ noch nicht geklärt - liest bisher nur den beim Laden default gezeigten Zeitraum (aktuell "gestern") |
+| 7. Anbindung an die Energieprognose-Tag-Sensoren (Offset ≤ -2 → echte statt geschätzte Werte) | ❌ noch offen |
 
-**Anders als beim Nachbar-Add-on "Vivendi Dienstplan Sync"** kennen wir bisher nur Screenshots
-der bereits eingeloggten Seite, nicht das Login-Formular selbst. Die Login-Selektoren in
-`app/zenwave.py` sind ein informierter erster Versuch (generische E-Mail-/Passwort-Feldtypen
-statt hartcodierter CSS-Klassen). Erwartungsgemäß braucht es wie bei Vivendi mehrere echte
-Testläufe mit `debug_screenshots: true` (Standard bei diesem Add-on vorerst AN, siehe
-`config.yaml`), um die tatsächlichen Selektoren zu finden - Screenshots/HTML-Dumps landen unter
-`/share/zenwave_sync/debug/`.
+**Weg dorthin (09.08.2026, vier echte Testläufe mit Debug-Screenshots nötig, wie schon bei
+Vivendi):** Der ursprüngliche Entwurf nahm ein einstufiges Login mit direktem Passwortfeld an -
+tatsächlich ist es zweistufig (erst E-Mail, dann erst erscheint das Passwortfeld, "powered by
+Nomos"-Auth). Danach zwei Runden Timing-Probleme: `networkidle` als Erfolgs-/Fehler-Signal
+erwies sich als unzuverlässig, weil die SPA vermutlich dauerhaft Hintergrundverbindungen offen
+hält (Websocket-Heartbeat o.ä.) und "idle" dadurch entweder zu früh (mitten in der
+Redirect-Animation) oder gar nicht auslöste. Fix: statt auf Abwesenheit des Passwortfelds oder
+`networkidle` zu prüfen, wird jetzt direkt auf das nächste konkret erwartete Element gewartet
+("Verbrauch"-Navigation nach Login, "INTERVALLDATEN"-Karte nach Tab-Wechsel).
+
+`debug_screenshots: true` bleibt vorerst weiter an (siehe `config.yaml`) - kostet nur etwas
+Speicherplatz, ist aber hilfreich für die noch offenen Punkte 5 und 6 oben.
 
 ## Bekannte Portal-Struktur (aus Screenshots, 09.08.2026)
 
