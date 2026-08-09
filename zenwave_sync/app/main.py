@@ -48,6 +48,7 @@ def sync_once(options: dict) -> None:
         {k: v for k, v in data.items() if k != "raw_card_text"},
     )
     ha_sync.publish_intervalldaten(data)
+    ha_sync.publish_preisaufschlag(data)
     clear_error()
 
 

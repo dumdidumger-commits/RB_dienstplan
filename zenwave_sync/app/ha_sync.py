@@ -6,12 +6,19 @@ z.B. MQTT - fuer drei simple Werte reicht das, keine zusaetzliche Abhaengigkeit 
 
 import logging
 import os
+import re
+from datetime import datetime
 
 import requests
 
 _LOGGER = logging.getLogger(__name__)
 _SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 _BASE_URL = "http://supervisor/core/api"
+
+_MONTH_MAP = {
+    "Jan": 1, "Feb": 2, "Mär": 3, "Mrz": 3, "Apr": 4, "Mai": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Okt": 10, "Nov": 11, "Dez": 12,
+}
 
 
 def _set_state(entity_id: str, state, attributes: dict) -> None:
@@ -25,6 +32,100 @@ def _set_state(entity_id: str, state, attributes: dict) -> None:
         timeout=15,
     )
     resp.raise_for_status()
+
+
+def _get_state(entity_id: str) -> dict | None:
+    if not _SUPERVISOR_TOKEN:
+        return None
+    resp = requests.get(
+        f"{_BASE_URL}/states/{entity_id}",
+        headers={"Authorization": f"Bearer {_SUPERVISOR_TOKEN}"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _epex_price_ct_kwh_at(zeitpunkt_label: str) -> float | None:
+    """Sucht in sensor.epex_spot_data_market_price (custom_components/epex_spot) das
+    15-Min-Intervall, das zeitpunkt_label ("9. Aug., 11:45", Jahr fehlt im Label) enthaelt,
+    und gibt den Boersenpreis in ct/kWh zurueck (der HA-Sensor liefert €/kWh)."""
+    m = re.match(r"(\d{1,2})\.\s*(\w{3})\.?,?\s*(\d{2}):(\d{2})", zeitpunkt_label or "")
+    if not m:
+        return None
+    day, mon_abbr, hh, mm = m.groups()
+    month = _MONTH_MAP.get(mon_abbr)
+    if not month:
+        return None
+
+    epex = _get_state("sensor.epex_spot_data_market_price")
+    data = (epex or {}).get("attributes", {}).get("data", [])
+    if not data:
+        return None
+
+    # Jahr/Zeitzone aus dem ersten Datenpunkt uebernehmen, da das gescrapte Label selbst kein
+    # Jahr enthaelt.
+    ref = datetime.fromisoformat(data[0]["start_time"])
+    target = datetime(ref.year, month, int(day), int(hh), int(mm), tzinfo=ref.tzinfo)
+    # Jahreswechsel Dezember/Januar wuerde hier falsch landen (Label-Jahr = Referenz-Jahr
+    # angenommen) - fuer dieses Add-on aktuell nicht relevant, bei Bedarf spaeter nachruesten.
+
+    for entry in data:
+        start = datetime.fromisoformat(entry["start_time"])
+        end = datetime.fromisoformat(entry["end_time"])
+        if start <= target < end:
+            return entry["price_per_kwh"] * 100
+    return None
+
+
+def publish_preisaufschlag(data: dict) -> None:
+    """Berechnet den festen Preisaufschlag (Netzentgelte + Steuern & Abgaben + die im
+    "Börsenpreis & Beschaffung"-Wert enthaltene Beschaffungsmarge oberhalb des reinen
+    EPEX-Rohpreises) und schreibt ihn als sensor.zenwave_preis_aufschlag_fix.
+
+    Ersetzt die bisherige Schätzung `input_number.zenwave_preisaufschlag` in
+    sensor.zenwave_gesamtpreis (template.yaml) - Nutzerwunsch 09.08.2026: echte statt
+    geschätzte Werte, nachdem sich Netzentgelte/Steuern/Beschaffungsmarge an zwei Messungen
+    desselben Tages als praktisch konstant erwiesen (siehe project_zenwave_sync_planning
+    Memory).
+    """
+    netzentgelte = data.get("netzentgelte_ct_kwh")
+    steuern = data.get("steuern_abgaben_ct_kwh")
+    boersenpreis_beschaffung = data.get("boersenpreis_beschaffung_ct_kwh")
+    zeitpunkt = data.get("intervall_zeitpunkt")
+    if netzentgelte is None or steuern is None or boersenpreis_beschaffung is None or not zeitpunkt:
+        _LOGGER.warning("Preiskomponenten unvollstaendig, kann Fix-Aufschlag nicht berechnen: %s", data)
+        return
+
+    epex_ct_kwh = _epex_price_ct_kwh_at(zeitpunkt)
+    if epex_ct_kwh is None:
+        _LOGGER.warning(
+            "Konnte keinen passenden EPEX-Preis fuer Zeitpunkt '%s' finden - "
+            "Fix-Aufschlag nicht berechnet", zeitpunkt,
+        )
+        return
+
+    beschaffungsmarge = boersenpreis_beschaffung - epex_ct_kwh
+    aufschlag_fix = netzentgelte + steuern + beschaffungsmarge
+
+    _set_state(
+        "sensor.zenwave_preis_aufschlag_fix",
+        round(aufschlag_fix, 4),
+        {
+            "unit_of_measurement": "ct/kWh",
+            "friendly_name": "ZenWave: fester Preisaufschlag (Netzentgelte+Steuern+Beschaffungsmarge)",
+            "netzentgelte_ct_kwh": netzentgelte,
+            "steuern_abgaben_ct_kwh": steuern,
+            "beschaffungsmarge_ct_kwh": round(beschaffungsmarge, 4),
+            "berechnet_fuer_intervall": zeitpunkt,
+            "epex_preis_zu_dem_zeitpunkt_ct_kwh": round(epex_ct_kwh, 4),
+            "quelle": "ZenWave-Kundenportal + sensor.epex_spot_data_market_price",
+        },
+    )
+    _LOGGER.info(
+        "Fixer Preisaufschlag aktualisiert: %.4f ct/kWh (Netzentgelte %.2f + Steuern %.2f + Beschaffungsmarge %.4f)",
+        aufschlag_fix, netzentgelte, steuern, beschaffungsmarge,
+    )
 
 
 def publish_intervalldaten(data: dict) -> None:
