@@ -126,12 +126,13 @@ def write_ics(shifts: list[Shift]) -> tuple[str, bool]:
         "PRODID:-//dienstplan_sync//DE",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
-        # Bewusst NICHT "Dienstplan" (wie der Google-API-Kalender) - Google fuehrt ICS-
-        # Kalender-Abos immer als eigenstaendigen, separaten Kalender, gleicht sie NICHT mit
-        # bestehenden Kalendern ab. Bei identischem Namen waeren beide in der Kalenderliste
-        # kaum unterscheidbar und liessen sich leicht versehentlich beide gleichzeitig
-        # einblenden -> jede Schicht doppelt sichtbar (Nutzerfrage 30.07.2026).
-        "X-WR-CALNAME:Dienstplan (Backup, ICS-Abo)",
+        # 12.08.2026 umbenannt (Roland-Wunsch): ICS ist inzwischen der verlaessliche Hauptweg,
+        # nicht mehr nur "Backup" (siehe project_vivendi_dienstplan_addon Memory) - u.a. weil
+        # eine dritte Person diesen Feed direkt in Alexa abonniert hat und dort bisher
+        # "... Backup..." als Kalendername sah. Ehemals bewusst "Dienstplan (Backup, ICS-Abo)"
+        # (siehe Git-Historie) um Namenskollision mit dem Google-API-Kalender "Dienstplan" zu
+        # vermeiden - diese Sorge ist nachrangig, seit der Google-API-Weg selbst nachrangig ist.
+        "X-WR-CALNAME:Rolands Dienstplan",
     ]
     for shift in shifts:
         lines.extend(_event_to_vevent(shift))

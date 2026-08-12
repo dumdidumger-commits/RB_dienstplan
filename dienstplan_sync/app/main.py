@@ -60,12 +60,23 @@ def _save_shift_snapshot(snapshot: dict) -> None:
         json.dump(snapshot, f, ensure_ascii=False)
 
 
+_MONATSNAMEN = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+]
+
+
 def _notify_shift_changes(shifts: list) -> None:
     """Vergleicht die frisch geparsten Schichten mit dem Stand des letzten Laufs und meldet
-    per Push, wenn Vivendi Dienste gestrichen oder neu hinzugefuegt hat (12.08.2026,
-    Rolands Wunsch). Bewusst unabhaengig von der Google-API (rein lokaler Vergleich anhand
-    von /data/last_shifts_snapshot.json) - passt zum neuen Fokus auf ICS als verlaesslichen
-    Hauptweg (siehe project_vivendi_dienstplan_addon Memory).
+    das Ergebnis per Push (12.08.2026, Rolands Wunsch). Bewusst unabhaengig von der
+    Google-API (rein lokaler Vergleich anhand von /data/last_shifts_snapshot.json) - passt
+    zum neuen Fokus auf ICS als verlaesslichen Hauptweg (siehe
+    project_vivendi_dienstplan_addon Memory).
+
+    12.08.2026 erweitert (Rolands Wunsch, "fuer die erste Zeit zum Testen"): meldet sich
+    jetzt bei JEDEM Lauf, nicht mehr nur bei echten Aenderungen - inkl. Bestaetigung "keine
+    Veraenderung" und eigenem Hinweis, wenn der Folgemonat neu dazukommt. Kann spaeter wieder
+    auf "nur bei echten Aenderungen" zurueckgestellt werden, sobald sich das eingespielt hat.
 
     Der Deckungszeitraum (bis zu welchem Datum ueberhaupt Schichten geladen wurden) waechst
     am 17. jedes Monats, wenn der Folgemonat dazukommt (siehe NEXT_MONTH_AVAILABLE_FROM_DAY) -
@@ -75,7 +86,6 @@ def _notify_shift_changes(shifts: list) -> None:
     new_by_id = {}
     for s in shifts:
         eid = calendar_sync._event_id(s)
-        body = calendar_sync._to_event_body(s)
         eintrag = {"datum": s.datum.isoformat(), "code": s.ist_code}
         if s.start and s.ende:
             eintrag["zeit"] = f"{s.start}–{s.ende}"
@@ -86,8 +96,17 @@ def _notify_shift_changes(shifts: list) -> None:
     old_by_id = alt.get("shifts", {})
     old_coverage_end = alt.get("coverage_end")
 
-    if old_by_id and old_coverage_end and new_coverage_end:
-        overlap_end = min(old_coverage_end, new_coverage_end.isoformat())
+    absatz = []
+
+    if not old_by_id or not old_coverage_end:
+        absatz.append("Erster Lauf, ich hab mir den aktuellen Stand als Vergleichsbasis gemerkt.")
+    else:
+        alter_monat = date.fromisoformat(old_coverage_end).replace(day=1)
+        neuer_monat = new_coverage_end.replace(day=1) if new_coverage_end else alter_monat
+        if neuer_monat > alter_monat:
+            absatz.append(f"Der {_MONATSNAMEN[neuer_monat.month - 1]} ist jetzt auch verfügbar und wurde mit importiert.")
+
+        overlap_end = min(old_coverage_end, new_coverage_end.isoformat()) if new_coverage_end else old_coverage_end
         old_overlap = {k: v for k, v in old_by_id.items() if v["datum"] <= overlap_end}
         new_overlap = {k: v for k, v in new_by_id.items() if v["datum"] <= overlap_end}
         hinzugekommen = [v for k, v in new_overlap.items() if k not in old_overlap]
@@ -103,13 +122,17 @@ def _notify_shift_changes(shifts: list) -> None:
                 zeit = f" {v['zeit']}" if "zeit" in v else ""
                 zeilen.append((v["datum"], f"{d}: {v['code']}{zeit} neu zugekommen"))
             zeilen.sort(key=lambda t: t[0])
-            message = "\n".join(text for _, text in zeilen)
-            _LOGGER.info("Dienstplan-Aenderung erkannt: %s", message.replace("\n", " | "))
-            notify_push(
-                "Dienstplan geändert",
-                message,
-                notification_id="dienstplan_sync_aenderung",
-            )
+            absatz.append("\n".join(text for _, text in zeilen))
+        else:
+            absatz.append("Sonst keine Veränderung zum letzten Abgleich.")
+
+    message = f"{len(shifts)} Dienste abgeholt.\n\n" + "\n\n".join(absatz)
+    _LOGGER.info("Dienstplan-Sync-Meldung: %s", message.replace("\n", " | "))
+    notify_push(
+        "Dienstplan abgeholt",
+        message,
+        notification_id="dienstplan_sync_aenderung",
+    )
 
     _save_shift_snapshot({
         "coverage_end": new_coverage_end.isoformat() if new_coverage_end else None,
