@@ -1,5 +1,5 @@
 name: "ZenWave Sync"
-version: "0.1.12"
+version: "0.1.13"
 slug: "zenwave_sync"
 description: "Liest Verbrauch, Durchschnittspreis und variable Kosten aus dem ZenWave-Kundenportal (Zendure) aus, statt sie aus Shelly/Poweropti zu schaetzen"
 url: "https://github.com/dumdidumger-commits/RB_dienstplan"
@@ -24,6 +24,12 @@ options:
   # Screenshots, um die Login-/Auslese-Selektoren nachzujustieren. Nach ein paar erfolgreichen
   # Laeufen auf false stellen.
   debug_screenshots: true
+  # 12.08.2026: Kommagetrennte ISO-Daten ("2026-08-09,2026-08-10"), fuer die beim naechsten
+  # Start gezielt die exakten, ueber den Kalender im Zeitraum-Dropdown ausgewaehlten Werte
+  # nachgetragen werden sollen (z.B. um aeltere Tage zu verifizieren/korrigieren, siehe
+  # project_zenwave_sync_planning Memory). Wird nach erfolgreicher Verarbeitung automatisch
+  # wieder auf "" zurueckgesetzt, laeuft also nicht bei jedem Neustart erneut.
+  backfill_dates: ""
 schema:
   zenwave_username: str
   zenwave_password: password
@@ -31,5 +37,6 @@ schema:
   run_time: match(^([0-1][0-9]|2[0-3]):[0-5][0-9]$)
   log_level: list(debug|info|warning|error)
   debug_screenshots: bool
+  backfill_dates: str
 map:
   - share:rw

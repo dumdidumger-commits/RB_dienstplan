@@ -31,11 +31,16 @@ import json
 import logging
 import os
 import re
+from datetime import date
 
 from playwright.sync_api import Page, sync_playwright
 
 _LOGGER = logging.getLogger(__name__)
 _DEBUG_DIR = "/share/zenwave_sync/debug"
+_MONTH_NAMES_DE = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+]
 
 
 def _debug_shot(page: Page, name: str, html: bool = False) -> None:
@@ -120,12 +125,18 @@ def _parse_strompreis_card(text: str) -> dict:
     }
 
 
-def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
+def fetch_intervalldaten(
+    login_url: str, username: str, password: str, requested_dates: list[date] | None = None
+) -> dict:
     """Loggt sich ein und liest die "Intervalldaten"-Karte im "Verbrauch"-Tab aus.
 
-    Gibt vorerst nur den beim Laden standardmaessig gezeigten Zeitraum zurueck - siehe
-    Modul-Docstring.
+    Gibt den beim Laden standardmaessig gezeigten Zeitraum zurueck (fuer den taeglichen Sync).
+    `requested_dates` (12.08.2026 ergaenzt): optionale Liste konkreter vergangener Tage, die
+    zusaetzlich gezielt ueber den Kalender im "Zeitraum"-Dropdown ausgelesen werden (z.B. zum
+    manuellen Nachtragen/Verifizieren einzelner Tage) - landet im Rueckgabe-Dict unter
+    "specific_days" als {"2026-08-10": {...}, ...}.
     """
+    specific_days_result: dict = {}
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -250,28 +261,48 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
             card_text = card.inner_text()
             _debug_shot(page, "07_intervalldaten_karte")
 
-            # TEMPORAER (12.08.2026): Erkundung des "Zeitraum"-Dropdowns, um herauszufinden,
-            # ob/wie sich beliebige vergangene Tage gezielt auswaehlen lassen (statt nur den
-            # beim Laden default gezeigten Zeitraum). Nur aktiv wenn ZENWAVE_EXPLORE_DATES=1,
-            # schreibt Ergebnis nach /share/zenwave_sync/debug/dropdown_explore.html - kein
-            # Einfluss auf den normalen Rueckgabewert/Produktivbetrieb.
-            if os.environ.get("ZENWAVE_EXPLORE_DATES") == "1":
-                try:
+            # 12.08.2026: Fuer explizit angefragte vergangene Tage (Parameter requested_dates)
+            # den Kalender im "Zeitraum"-Dropdown bedienen, statt nur den default
+            # gezeigten Zeitraum zu lesen. Aufbau des Dropdowns (per Screenshot verifiziert):
+            # Schnellauswahl (Heute/Gestern/Letzte X Tage/...) links, echter Monatskalender
+            # rechts mit anklickbaren Tageszahlen, unten "Ausgewaehlt: <Label>".
+            if requested_dates:
+                for target in requested_dates:
                     zeitraum_btn = card.locator("button:has-text('Zeitraum')").first
                     zeitraum_btn.click()
-                    page.wait_for_timeout(1000)
-                    os.makedirs(_DEBUG_DIR, exist_ok=True)
-                    page.screenshot(path=f"{_DEBUG_DIR}/dropdown_open.png", full_page=True)
-                    with open(f"{_DEBUG_DIR}/dropdown_explore.html", "w", encoding="utf-8") as f:
-                        f.write(page.content())
-                    # Menu-Items separat als Text, falls vorhanden - leichter auszuwerten als
-                    # das komplette HTML.
-                    menu_items = page.locator("[role=menuitem], [data-slot=dropdown-menu-item]").all_inner_texts()
-                    with open(f"{_DEBUG_DIR}/dropdown_menu_items.txt", "w", encoding="utf-8") as f:
-                        f.write("\n---\n".join(menu_items))
-                    _LOGGER.info("Dropdown-Erkundung: %d Menu-Items gefunden: %s", len(menu_items), menu_items)
-                except Exception:
-                    _LOGGER.exception("Dropdown-Erkundung fehlgeschlagen (nicht fatal)")
+                    page.wait_for_timeout(500)
+                    calendar_popup = page.locator("text=Ausgewählt:").locator(
+                        "xpath=ancestor::*[self::div][.//table or .//*[contains(@class,'grid')]][1]"
+                    ).first
+                    # Ggf. Monat wechseln, falls das Zieldatum nicht im aktuell gezeigten
+                    # Monat liegt (Kalenderkopf "August 2026" o.ae. mit </> Pfeilen daneben).
+                    month_label = calendar_popup.locator("text=/^[A-Za-zäöü]+ \\d{4}$/").first
+                    for _ in range(6):  # Sicherheitslimit gegen Endlosschleife
+                        current_label = month_label.inner_text()
+                        target_label = f"{_MONTH_NAMES_DE[target.month - 1]} {target.year}"
+                        if current_label == target_label:
+                            break
+                        # Zurueckblaettern (Pfeil links = vorheriger Monat) - fuer unseren
+                        # Anwendungsfall (kuerzlich vergangene Tage) reicht "rueckwaerts".
+                        calendar_popup.locator("button").first.click()
+                        page.wait_for_timeout(300)
+                    day_cell = calendar_popup.locator(
+                        f"xpath=.//button[normalize-space(text())='{target.day}']"
+                    ).first
+                    day_cell.click()
+                    page.wait_for_timeout(800)
+                    fresh_card_text = card.inner_text()
+                    fresh_verbrauch = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", fresh_card_text)
+                    fresh_kosten = re.search(r"Variable Kosten[^\d]*([\d.,]+)\s*€", fresh_card_text)
+                    fresh_preis = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", fresh_card_text)
+                    specific_days_result[target.isoformat()] = {
+                        "verbrauch_kwh": _parse_de_number(fresh_verbrauch.group(1)) if fresh_verbrauch else None,
+                        "kosten_eur": _parse_de_number(fresh_kosten.group(1)) if fresh_kosten else None,
+                        "durchschnittspreis_ct_kwh": _parse_de_number(fresh_preis.group(1)) if fresh_preis else None,
+                        "raw_card_text": fresh_card_text,
+                    }
+                    _debug_shot(page, f"day_{target.isoformat()}")
+                    _LOGGER.info("Tag %s gelesen: %s", target.isoformat(), specific_days_result[target.isoformat()])
 
             preis_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", card_text)
             verbrauch_match = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", card_text)
@@ -287,6 +318,7 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
                 # Tag noch nicht bekannt, siehe Modul-Docstring.
                 "status": "unknown",
                 "raw_card_text": card_text,
+                "specific_days": specific_days_result,
                 **strompreis_data,
             }
             if result["verbrauch_kwh"] is None or result["kosten_eur"] is None:

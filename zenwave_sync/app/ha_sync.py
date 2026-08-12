@@ -230,4 +230,33 @@ def publish_intervalldaten(data: dict) -> None:
             "Detailbox auf der Strompreis-Karte vermutlich nicht wie erwartet sichtbar/geparst"
         )
 
+
+def publish_specific_days(specific_days: dict) -> None:
+    """Schreibt gezielt nachgetragene/korrigierte Einzeltage (ueber den Kalender im Zeitraum-
+    Dropdown ausgelesen, siehe zenwave.py fetch_intervalldaten(requested_dates=...)) nach
+    sensor.zenwave_manuelle_korrekturen (12.08.2026 neu).
+
+    Anders als sensor.zenwave_real_verbrauch/_kosten (immer nur EIN Tag, der zuletzt gescrapte)
+    haelt dieser Sensor eine wachsende Sammlung {"YYYY-MM-DD": {...}} als Attribut "tage" -
+    damit lassen sich beliebig viele einzelne Tage nachtragen, ohne aeltere zu verlieren.
+    app.html prueft diesen Sensor VOR dem Poweropti/Shelly-Schaetzwert-Fallback (siehe
+    renderVbTagSummary).
+    """
+    if not specific_days:
+        return
+    bestehend = _get_state("sensor.zenwave_manuelle_korrekturen") or {}
+    tage = dict((bestehend.get("attributes") or {}).get("tage") or {})
+    tage.update(specific_days)
+    _set_state(
+        "sensor.zenwave_manuelle_korrekturen",
+        len(tage),
+        {
+            "unit_of_measurement": "Tage",
+            "friendly_name": "ZenWave: manuell nachgetragene/korrigierte Tage",
+            "quelle": "ZenWave-Kundenportal (gezielte Kalenderauswahl)",
+            "tage": tage,
+        },
+    )
+    _LOGGER.info("Manuelle Korrekturtage aktualisiert: %s", list(specific_days.keys()))
+
     _LOGGER.info("ZenWave-Sensoren aktualisiert fuer Zeitraum '%s' (Status: %s)", label, data.get("status"))

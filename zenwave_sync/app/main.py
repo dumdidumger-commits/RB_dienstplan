@@ -11,7 +11,9 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+
+import requests
 
 import ha_sync
 import zenwave
@@ -47,6 +49,24 @@ def _mark_synced_today() -> None:
         f.write(datetime.now().date().isoformat())
 
 
+def _clear_backfill_option() -> None:
+    """Setzt die Add-on-Option backfill_dates ueber die Supervisor-API wieder auf "" zurueck,
+    damit ein einmal angefragter Nachtrag nicht bei jedem folgenden Neustart wiederholt wird."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return
+    try:
+        resp = requests.post(
+            "http://supervisor/addons/self/options",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"options": {"backfill_dates": ""}},
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        _LOGGER.exception("Konnte backfill_dates-Option nicht zuruecksetzen")
+
+
 def setup_logging(level_name: str) -> None:
     level = getattr(logging, level_name.upper(), logging.INFO)
     logging.basicConfig(
@@ -56,17 +76,37 @@ def setup_logging(level_name: str) -> None:
     )
 
 
+def _parse_backfill_dates(raw: str) -> list[date]:
+    result = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            result.append(date.fromisoformat(part))
+        except ValueError:
+            _LOGGER.warning("Ungueltiges Datum in backfill_dates ignoriert: %r", part)
+    return result
+
+
 def sync_once(options: dict) -> None:
     _LOGGER.info("Starte ZenWave-Sync")
+    requested_dates = _parse_backfill_dates(options.get("backfill_dates", ""))
+    if requested_dates:
+        _LOGGER.info("Zusaetzlich angefragte Nachtrags-Tage: %s", requested_dates)
     data = zenwave.fetch_intervalldaten(
         login_url=options["zenwave_login_url"],
         username=options["zenwave_username"],
         password=options["zenwave_password"],
+        requested_dates=requested_dates,
     )
     _LOGGER.info(
         "ZenWave-Daten gelesen: %s",
         {k: v for k, v in data.items() if k != "raw_card_text"},
     )
+    if requested_dates:
+        ha_sync.publish_specific_days(data.get("specific_days", {}))
+        _clear_backfill_option()
     ha_sync.publish_intervalldaten(data)
     ha_sync.publish_preisaufschlag(data)
     clear_error()
@@ -87,7 +127,6 @@ def main() -> None:
     setup_logging(options.get("log_level", "info"))
     if options.get("debug_screenshots"):
         os.environ["ZENWAVE_SYNC_DEBUG"] = "1"
-        os.environ["ZENWAVE_EXPLORE_DATES"] = "1"  # TEMPORAER 12.08.2026, siehe zenwave.py
         _LOGGER.info("Debug-Screenshots aktiviert, werden unter /share/zenwave_sync/debug/ gespeichert")
 
     _LOGGER.info("ZenWave-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "07:00"))
@@ -107,9 +146,10 @@ def main() -> None:
 
     # Einmal sofort beim (Neu-)Start laufen lassen, nicht bis zu 24h auf run_time warten -
     # ABER nur, wenn heute noch kein erfolgreicher Lauf stattgefunden hat (12.08.2026 Fix,
-    # siehe LAST_SYNC_MARKER_PATH oben). Verhindert unnoetige Zusatz-Abfragen bei Add-on-
-    # Neustarts, die nichts mit dem eigentlichen Sync zu tun haben.
-    if _already_synced_today() and os.environ.get("ZENWAVE_EXPLORE_DATES") != "1":
+    # siehe LAST_SYNC_MARKER_PATH oben) ODER ein Nachtrag (backfill_dates) angefragt wurde.
+    # Verhindert unnoetige Zusatz-Abfragen bei Add-on-Neustarts, die nichts mit dem
+    # eigentlichen Sync zu tun haben.
+    if _already_synced_today() and not options.get("backfill_dates"):
         _LOGGER.info("Heute bereits erfolgreich synchronisiert, ueberspringe Sofort-Lauf beim Start")
     else:
         run_and_handle_errors()
