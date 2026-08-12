@@ -68,26 +68,12 @@ def sync_once(options: dict) -> None:
         shifts.extend(dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH))
     _LOGGER.info("%d Schicht(en) aus %d Datei(en) geparst", len(shifts), len(xlsx_paths))
 
-    service = calendar_sync.build_service(TOKEN_PATH)
-    calendar_id = calendar_sync.get_or_create_calendar_id(service)
-
-    months_ahead = int(options.get("sync_months_ahead", 2))
-    window_start = date.today().replace(day=1)
-    # naiver, aber robuster Monats-Vorschub ohne zusaetzliche Abhaengigkeit (z.B. dateutil)
-    m = window_start.month - 1 + months_ahead
-    window_end = window_start.replace(year=window_start.year + m // 12, month=m % 12 + 1)
-
-    result = calendar_sync.sync_shifts(service, calendar_id, shifts, window_start, window_end)
-    _LOGGER.info(
-        "Sync fertig: %d neu, %d aktualisiert, %d geloescht, %d unveraendert",
-        result.inserted, result.updated, result.deleted, result.unchanged,
-    )
-    clear_error()
-
-    # Zusaetzliche, von der Google-API unabhaengige Absicherung (30.07.2026, Nutzerwunsch):
-    # .ics-Datei parallel schreiben, falls der OAuth-Testzugang irgendwann ausfaellt. Bewusst
-    # in einem eigenen try/except, damit ein Fehler hier NIE den bereits erfolgreichen
-    # Haupt-Sync (oben) im Nachhinein als Fehlschlag melden kann.
+    # 12.08.2026 Fix: ICS-Backup bewusst VOR dem Google-API-Aufruf, in eigenem try/except -
+    # vorher stand das NACH dem Google-Sync, wodurch es bei einem OAuth-Fehler (genau der
+    # Fall, gegen den es urspruenglich als Absicherung gedacht war, siehe 30.07.2026-Kommentar
+    # unten) NIE ausgefuehrt wurde und somit gar kein echtes unabhaengiges Backup war (siehe
+    # project_vivendi_dienstplan_addon Memory). Ein Fehler hier darf den Haupt-Sync unten
+    # trotzdem nie verhindern.
     try:
         filename, is_new = ics_export.write_ics(shifts)
         base_url = options.get("nabu_casa_base_url", "").rstrip("/")
@@ -104,8 +90,24 @@ def sync_once(options: dict) -> None:
                 f"Kalender mal nicht aktualisiert wird.",
                 notification_id="dienstplan_sync_ics_url",
             )
-    except Exception:  # noqa: BLE001 - darf den erfolgreichen Haupt-Sync nie gefaehrden
-        _LOGGER.exception("ICS-Datei konnte nicht geschrieben werden (Haupt-Sync war trotzdem erfolgreich)")
+    except Exception:  # noqa: BLE001 - darf den nachfolgenden Haupt-Sync nie verhindern
+        _LOGGER.exception("ICS-Datei konnte nicht geschrieben werden (Haupt-Sync laeuft trotzdem weiter)")
+
+    service = calendar_sync.build_service(TOKEN_PATH)
+    calendar_id = calendar_sync.get_or_create_calendar_id(service)
+
+    months_ahead = int(options.get("sync_months_ahead", 2))
+    window_start = date.today().replace(day=1)
+    # naiver, aber robuster Monats-Vorschub ohne zusaetzliche Abhaengigkeit (z.B. dateutil)
+    m = window_start.month - 1 + months_ahead
+    window_end = window_start.replace(year=window_start.year + m // 12, month=m % 12 + 1)
+
+    result = calendar_sync.sync_shifts(service, calendar_id, shifts, window_start, window_end)
+    _LOGGER.info(
+        "Sync fertig: %d neu, %d aktualisiert, %d geloescht, %d unveraendert",
+        result.inserted, result.updated, result.deleted, result.unchanged,
+    )
+    clear_error()
 
 
 def seconds_until_next_run(run_time: str) -> float:
