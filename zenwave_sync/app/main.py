@@ -90,7 +90,12 @@ def _parse_backfill_dates(raw: str) -> list[date]:
 
 
 def sync_once(options: dict) -> None:
-    _LOGGER.info("Starte ZenWave-Sync")
+    """Voller taeglicher Sync: Intervalldaten (Verbrauch/Kosten) + Strompreis-Karte. Bewusst
+    NUR 1x taeglich (siehe LAST_SYNC_MARKER_PATH oben) - die Intervalldaten-Karte zeigt kein
+    festes Kalendertag-Fenster, mehrfache Laeufe am selben Tag wuerden wieder das Rolling-
+    Fenster-Problem verursachen (project_shelly_vs_poweropti_miscalibration bzw.
+    project_zenwave_sync_planning Memory)."""
+    _LOGGER.info("Starte ZenWave-Sync (voll)")
     requested_dates = _parse_backfill_dates(options.get("backfill_dates", ""))
     if requested_dates:
         _LOGGER.info("Zusaetzlich angefragte Nachtrags-Tage: %s", requested_dates)
@@ -109,8 +114,30 @@ def sync_once(options: dict) -> None:
         _clear_backfill_option()
     ha_sync.publish_intervalldaten(data)
     ha_sync.publish_preisaufschlag(data)
+    ha_sync.publish_preis_snapshot(data)
     clear_error()
     _mark_synced_today()
+
+
+def price_sync_once(options: dict) -> None:
+    """Leichtgewichtiger Preis-Nur-Sync (12.08.2026 neu, Roland-Wunsch): laeuft mehrmals
+    taeglich (siehe price_sync_interval_hours), liest NUR die Strompreis-Karte (ohne
+    Verbrauch-Tab) und speichert einen echten Preis-Schnappschuss mit Zeitstempel. Aktualisiert
+    dabei auch gleich den Aufschlag fuer die 24h-Prognosekurve, damit die sich zwischen den
+    taeglichen vollen Laeufen selbst nachkorrigiert."""
+    _LOGGER.info("Starte ZenWave-Sync (nur Preis)")
+    data = zenwave.fetch_strompreis_only(
+        login_url=options["zenwave_login_url"],
+        username=options["zenwave_username"],
+        password=options["zenwave_password"],
+    )
+    _LOGGER.info(
+        "ZenWave-Preis-Snapshot gelesen: %s",
+        {k: v for k, v in data.items() if k != "raw_strompreis_text"},
+    )
+    ha_sync.publish_preis_snapshot(data)
+    ha_sync.publish_preisaufschlag(data)
+    clear_error(notification_id="zenwave_sync_price_error")
 
 
 def seconds_until_next_run(run_time: str) -> float:
@@ -129,9 +156,13 @@ def main() -> None:
         os.environ["ZENWAVE_SYNC_DEBUG"] = "1"
         _LOGGER.info("Debug-Screenshots aktiviert, werden unter /share/zenwave_sync/debug/ gespeichert")
 
-    _LOGGER.info("ZenWave-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "07:00"))
+    price_interval_h = float(options.get("price_sync_interval_hours", 5) or 5)
+    _LOGGER.info(
+        "ZenWave-Sync-Add-on gestartet - voller Lauf taeglich um %s Uhr, Preis-Nur-Lauf alle %.1fh",
+        options.get("run_time", "23:59"), price_interval_h,
+    )
 
-    def run_and_handle_errors() -> None:
+    def run_full_and_handle_errors() -> None:
         try:
             sync_once(options)
         except zenwave.ZenwaveLoginError as exc:
@@ -144,6 +175,19 @@ def main() -> None:
             _LOGGER.exception("Unerwarteter Fehler im ZenWave-Sync-Lauf")
             notify_error("ZenWave-Sync: Unerwarteter Fehler", str(exc))
 
+    def run_price_and_handle_errors() -> None:
+        try:
+            price_sync_once(options)
+        except zenwave.ZenwaveLoginError as exc:
+            _LOGGER.exception("ZenWave-Login fehlgeschlagen (Preis-Sync)")
+            notify_error("ZenWave-Sync: Login fehlgeschlagen (Preis)", str(exc), notification_id="zenwave_sync_price_error")
+        except zenwave.ZenwaveScrapeError as exc:
+            _LOGGER.exception("ZenWave-Preis konnte nicht gelesen werden")
+            notify_error("ZenWave-Sync: Preis konnte nicht gelesen werden", str(exc), notification_id="zenwave_sync_price_error")
+        except Exception as exc:  # noqa: BLE001 - Loop soll nie sterben
+            _LOGGER.exception("Unerwarteter Fehler im ZenWave-Preis-Sync-Lauf")
+            notify_error("ZenWave-Sync: Unerwarteter Fehler (Preis)", str(exc), notification_id="zenwave_sync_price_error")
+
     # Einmal sofort beim (Neu-)Start laufen lassen, nicht bis zu 24h auf run_time warten -
     # ABER nur, wenn heute noch kein erfolgreicher Lauf stattgefunden hat (12.08.2026 Fix,
     # siehe LAST_SYNC_MARKER_PATH oben) ODER ein Nachtrag (backfill_dates) angefragt wurde.
@@ -152,13 +196,32 @@ def main() -> None:
     if _already_synced_today() and not options.get("backfill_dates"):
         _LOGGER.info("Heute bereits erfolgreich synchronisiert, ueberspringe Sofort-Lauf beim Start")
     else:
-        run_and_handle_errors()
+        run_full_and_handle_errors()
+
+    # Preis-Nur-Sync IMMER sofort beim Start auch einmal ausfuehren (unabhaengig vom
+    # Tages-Merker oben) - das ist die leichtgewichtige, mehrmals-taegliche Preis-Abfrage,
+    # fuer die es bewusst keine "schon heute gelaufen"-Sperre gibt.
+    run_price_and_handle_errors()
+
+    price_interval_s = price_interval_h * 3600
+    verbleibend_voll = seconds_until_next_run(options.get("run_time", "23:59"))
+    verbleibend_preis = price_interval_s
 
     while True:
-        wait_s = seconds_until_next_run(options.get("run_time", "07:00"))
-        _LOGGER.info("Naechster Sync-Lauf in %.0f Minuten", wait_s / 60)
+        wait_s = min(verbleibend_voll, verbleibend_preis)
+        _LOGGER.info(
+            "Naechster ZenWave-Lauf in %.0f Minuten (voll in %.0f Min, Preis in %.0f Min)",
+            wait_s / 60, verbleibend_voll / 60, verbleibend_preis / 60,
+        )
         time.sleep(wait_s)
-        run_and_handle_errors()
+        verbleibend_voll -= wait_s
+        verbleibend_preis -= wait_s
+        if verbleibend_voll <= 1:
+            run_full_and_handle_errors()
+            verbleibend_voll = seconds_until_next_run(options.get("run_time", "23:59"))
+        if verbleibend_preis <= 1:
+            run_price_and_handle_errors()
+            verbleibend_preis = price_interval_s
 
 
 if __name__ == "__main__":

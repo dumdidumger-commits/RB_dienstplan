@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -85,6 +85,32 @@ def _labeled_ct_value(text: str, label: str) -> float | None:
     return _parse_de_number(m.group(1)) if m else None
 
 
+_MONTH_ABBR_DE = {
+    "Jan": 1, "Feb": 2, "Mär": 3, "Mrz": 3, "Apr": 4, "Mai": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Okt": 10, "Nov": 11, "Dez": 12,
+}
+
+
+def _zeitpunkt_ist_plausibel(label: str | None, toleranz_stunden: float = 3.0) -> bool:
+    """Prueft, ob ein gescraptes Zeitstempel-Label ("13. Aug., 08:30") nah genug an der
+    tatsaechlichen aktuellen Uhrzeit liegt, um als echter "Jetzt"-Wert zu gelten (12.08.2026
+    neu, siehe fetch_intervalldaten - Diagramm zeigte einmal ein falsches/zukuenftiges Label
+    bei noch nicht fertig geladenen Chart-Daten)."""
+    if not label:
+        return False
+    m = re.match(r"(\d{1,2})\.\s*(\w{3})\.?,?\s*(\d{1,2}):(\d{2})", label.strip())
+    if not m:
+        return False
+    day, mon_abbr, hh, mm = m.groups()
+    month = _MONTH_ABBR_DE.get(mon_abbr)
+    if not month:
+        return False
+    now = datetime.now()
+    kandidat = datetime(now.year, month, int(day), int(hh), int(mm))
+    diff_stunden = abs((kandidat - now).total_seconds()) / 3600
+    return diff_stunden <= toleranz_stunden
+
+
 def _parse_strompreis_card(text: str) -> dict:
     """Auslese der "Strompreis"-Karte auf der Startseite: Ø Preis, aktueller Preis, und (aus
     der "Jetzt"-Detailbox) die 3 Preiskomponenten samt Zeitstempel des Intervalls.
@@ -123,6 +149,114 @@ def _parse_strompreis_card(text: str) -> dict:
         "steuern_abgaben_ct_kwh": _labeled_ct_value(tail, "Steuern & Abgaben"),
         "raw_strompreis_text": text,
     }
+
+
+def _login(page: Page, login_url: str, username: str, password: str) -> None:
+    """Zweistufiger Login (E-Mail dann Passwort), gemeinsam genutzt von
+    fetch_intervalldaten() und fetch_strompreis_only() (12.08.2026 herausgezogen, war vorher
+    dupliziert)."""
+    page.goto(login_url, wait_until="networkidle", timeout=30000)
+    _debug_shot(page, "01_login_page", html=True)
+
+    email_field = page.locator(
+        "input[type=email], input[name*=mail i], input[autocomplete=username]"
+    ).first
+    email_field.wait_for(state="visible", timeout=15000)
+    email_field.fill(username)
+    _debug_shot(page, "02_email_ausgefuellt")
+
+    submit_button = page.locator(
+        "button[type=submit], button:has-text('Einloggen'), "
+        "button:has-text('Anmelden'), button:has-text('Login'), "
+        "button:has-text('Weiter')"
+    ).first
+    submit_button.click()
+    page.wait_for_load_state("networkidle", timeout=30000)
+    _debug_shot(page, "03_nach_email_schritt", html=True)
+
+    password_field = page.locator("input[type=password]").first
+    try:
+        password_field.wait_for(state="visible", timeout=15000)
+    except Exception as exc:
+        _debug_shot(page, "03b_kein_passwortfeld", html=True)
+        raise ZenwaveLoginError(
+            "Nach der E-Mail-Eingabe erschien innerhalb von 15s kein Passwortfeld - "
+            "moeglicherweise ein Einmalcode-/Magic-Link-Verfahren statt Passwort-Login. "
+            "Siehe Debug-Screenshot 03_nach_email_schritt."
+        ) from exc
+    password_field.fill(password)
+    _debug_shot(page, "04_passwort_ausgefuellt")
+
+    password_submit = page.locator(
+        "button[type=submit], button:has-text('Einloggen'), "
+        "button:has-text('Anmelden'), button:has-text('Login'), "
+        "button:has-text('Weiter')"
+    ).first
+    password_submit.click()
+    try:
+        page.locator("text=Verbrauch").first.wait_for(state="visible", timeout=25000)
+    except Exception as exc:
+        _debug_shot(page, "05b_login_vermutlich_fehlgeschlagen", html=True)
+        raise ZenwaveLoginError(
+            "Nach dem Absenden des Passwort-Formulars ist innerhalb von 25s keine "
+            "'Verbrauch'-Navigation erschienen - Login vermutlich fehlgeschlagen. "
+            "Siehe Debug-Screenshots."
+        ) from exc
+    _debug_shot(page, "05_nach_login", html=True)
+
+
+def _read_strompreis_card_robust(page: Page) -> dict:
+    """Liest die "Strompreis"-Karte, mit bis zu 2 Versuchen falls das Diagramm/die Detailbox
+    (Preiskomponenten + Zeitstempel) noch nicht fertig geladen ist (12.08.2026 Fix - siehe
+    Modul-Docstring/Aenderungshistorie). "Aktuell"-Preis und Tages-Durchschnitt sind NICHT
+    chart-abhaengig und bleiben auch bei verworfener Detailbox gueltig. Gemeinsam genutzt von
+    fetch_intervalldaten() und fetch_strompreis_only()."""
+    strompreis_data: dict = {}
+    try:
+        page.locator("text=STROMPREIS").first.wait_for(state="visible", timeout=15000)
+        strompreis_card = page.locator("text=STROMPREIS").first.locator(
+            "xpath=ancestor::*[self::div][.//text()[contains(., 'Quelle: EPEX Spot')]]"
+        ).first
+        for versuch in range(2):
+            page.wait_for_timeout(4000 if versuch == 0 else 8000)
+            _debug_shot(page, f"05b_startseite_strompreis_v{versuch}", html=True)
+            kandidat = _parse_strompreis_card(strompreis_card.inner_text())
+            if _zeitpunkt_ist_plausibel(kandidat.get("intervall_zeitpunkt")):
+                strompreis_data = kandidat
+                break
+            _LOGGER.warning(
+                "Versuch %d: Zeitstempel '%s' in der Preiskomponenten-Detailbox wirkt "
+                "unplausibel (zu weit von 'jetzt' entfernt) - Diagramm vermutlich noch "
+                "nicht fertig geladen, %s",
+                versuch + 1, kandidat.get("intervall_zeitpunkt"),
+                "versuche erneut" if versuch == 0 else "gebe auf fuer diesen Lauf",
+            )
+            strompreis_data = kandidat
+            strompreis_data["boersenpreis_beschaffung_ct_kwh"] = None
+            strompreis_data["netzentgelte_ct_kwh"] = None
+            strompreis_data["steuern_abgaben_ct_kwh"] = None
+            strompreis_data["intervall_zeitpunkt"] = None
+    except Exception:
+        _LOGGER.exception("STROMPREIS-Karte konnte nicht gelesen werden (nicht fatal)")
+    return strompreis_data
+
+
+def fetch_strompreis_only(login_url: str, username: str, password: str) -> dict:
+    """Leichtgewichtiger Sync (12.08.2026 neu): loggt sich ein und liest NUR die Strompreis-
+    Karte (Aktuell-Preis, Tages-Durchschnitt, Preiskomponenten), OHNE zum Verbrauch-Tab zu
+    wechseln - fuer die haeufigeren Preis-Nur-Laeufe (alle paar Stunden, Roland-Wunsch
+    12.08.2026: echte, oefter aktualisierte Preis-Schnappschuesse statt nur die einmal
+    taegliche Hochrechnung). Bewusst getrennt vom vollen fetch_intervalldaten()-Lauf, der
+    weiterhin nur 1x taeglich laufen soll (siehe project_zenwave_sync_planning Memory zum
+    Rolling-Fenster-Problem bei mehrfachen Intervalldaten-Abfragen am selben Tag)."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        try:
+            _login(page, login_url, username, password)
+            return _read_strompreis_card_robust(page)
+        finally:
+            browser.close()
 
 
 def fetch_intervalldaten(
@@ -168,81 +302,13 @@ def fetch_intervalldaten(
             page.on("response", _log_api_response)
 
         try:
-            page.goto(login_url, wait_until="networkidle", timeout=30000)
-            _debug_shot(page, "01_login_page", html=True)
-
-            # Zweistufiger Login (09.08.2026 per Debug-Screenshot bestaetigt, "powered by
-            # Nomos"-Auth): Schritt 1 zeigt NUR ein E-Mail-Feld, kein Passwort. Passwort (oder
-            # ggf. ein Einmalcode) kommt erst auf einer zweiten Seite - deshalb hier bewusst
-            # NICHT wie im ersten Entwurf beide Felder blind zusammen befuellen.
-            email_field = page.locator(
-                "input[type=email], input[name*=mail i], input[autocomplete=username]"
-            ).first
-            email_field.wait_for(state="visible", timeout=15000)
-            email_field.fill(username)
-            _debug_shot(page, "02_email_ausgefuellt")
-
-            submit_button = page.locator(
-                "button[type=submit], button:has-text('Einloggen'), "
-                "button:has-text('Anmelden'), button:has-text('Login'), "
-                "button:has-text('Weiter')"
-            ).first
-            submit_button.click()
-            page.wait_for_load_state("networkidle", timeout=30000)
-            _debug_shot(page, "03_nach_email_schritt", html=True)
-
-            password_field = page.locator("input[type=password]").first
-            try:
-                password_field.wait_for(state="visible", timeout=15000)
-            except Exception as exc:
-                _debug_shot(page, "03b_kein_passwortfeld", html=True)
-                raise ZenwaveLoginError(
-                    "Nach der E-Mail-Eingabe erschien innerhalb von 15s kein Passwortfeld - "
-                    "moeglicherweise ein Einmalcode-/Magic-Link-Verfahren statt Passwort-Login. "
-                    "Siehe Debug-Screenshot 03_nach_email_schritt."
-                ) from exc
-            password_field.fill(password)
-            _debug_shot(page, "04_passwort_ausgefuellt")
-
-            password_submit = page.locator(
-                "button[type=submit], button:has-text('Einloggen'), "
-                "button:has-text('Anmelden'), button:has-text('Login'), "
-                "button:has-text('Weiter')"
-            ).first
-            password_submit.click()
-            # Zwei vorige Versuche pruefte per Abwesenheit des Passwortfelds - Debug-
-            # Screenshots vom 09.08.2026 zeigten aber wiederholt, dass der Login zu dem
-            # Zeitpunkt schon erfolgreich war ("Sicher eingeloggt."-Toast sichtbar), die Seite
-            # aber noch zwischen Login-Formular und Dashboard haengt (Ladespinner). Eine reine
-            # Abwesenheitspruefung ist hier zu anfaellig fuer diesen Zwischenzustand - deshalb
-            # jetzt direkt auf ein positives Erfolgsmerkmal warten (die "Verbrauch"-Navigation),
-            # statt auf das Fehlen des Passwortfelds zu schliessen.
-            try:
-                page.locator("text=Verbrauch").first.wait_for(state="visible", timeout=25000)
-            except Exception as exc:
-                _debug_shot(page, "05b_login_vermutlich_fehlgeschlagen", html=True)
-                raise ZenwaveLoginError(
-                    "Nach dem Absenden des Passwort-Formulars ist innerhalb von 25s keine "
-                    "'Verbrauch'-Navigation erschienen - Login vermutlich fehlgeschlagen. "
-                    "Siehe Debug-Screenshots."
-                ) from exc
-            _debug_shot(page, "05_nach_login", html=True)
+            _login(page, login_url, username, password)
 
             # Kurz auf der Startseite bleiben, damit die "Strompreis"-Karte (naechste 24h,
             # Preis-Komponenten) ihre Daten laedt und dabei vom Netzwerk-Mitschnitt oben
             # erfasst wird, bevor wir zum "Verbrauch"-Tab weiterklicken (09.08.2026,
             # Nutzerwunsch: auch die Preisprognose/-struktur mit auslesen statt nur Verbrauch).
-            strompreis_data: dict = {}
-            try:
-                page.locator("text=STROMPREIS").first.wait_for(state="visible", timeout=15000)
-                page.wait_for_timeout(3000)  # Chart-/API-Daten laden meist noch kurz nach
-                _debug_shot(page, "05b_startseite_strompreis", html=True)
-                strompreis_card = page.locator("text=STROMPREIS").first.locator(
-                    "xpath=ancestor::*[self::div][.//text()[contains(., 'Quelle: EPEX Spot')]]"
-                ).first
-                strompreis_data = _parse_strompreis_card(strompreis_card.inner_text())
-            except Exception:
-                _LOGGER.exception("STROMPREIS-Karte konnte nicht gelesen werden (nicht fatal)")
+            strompreis_data = _read_strompreis_card_robust(page)
 
             # "networkidle" erwies sich hier als unzuverlaessig (SPA haelt vermutlich
             # dauerhaft Hintergrundverbindungen offen - Websocket-Heartbeat, Analytics - daher

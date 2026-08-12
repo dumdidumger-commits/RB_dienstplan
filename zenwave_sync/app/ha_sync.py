@@ -230,6 +230,8 @@ def publish_intervalldaten(data: dict) -> None:
             "Detailbox auf der Strompreis-Karte vermutlich nicht wie erwartet sichtbar/geparst"
         )
 
+    _LOGGER.info("ZenWave-Sensoren aktualisiert fuer Zeitraum '%s' (Status: %s)", label, data.get("status"))
+
 
 def publish_specific_days(specific_days: dict) -> None:
     """Schreibt gezielt nachgetragene/korrigierte Einzeltage (ueber den Kalender im Zeitraum-
@@ -259,4 +261,35 @@ def publish_specific_days(specific_days: dict) -> None:
     )
     _LOGGER.info("Manuelle Korrekturtage aktualisiert: %s", list(specific_days.keys()))
 
-    _LOGGER.info("ZenWave-Sensoren aktualisiert fuer Zeitraum '%s' (Status: %s)", label, data.get("status"))
+
+def publish_preis_snapshot(data: dict) -> None:
+    """Speichert einen echten 'Aktuell'-Preis-Schnappschuss mit Zeitstempel in
+    sensor.zenwave_preis_historie_real (12.08.2026 neu, Roland-Wunsch: haeufigere echte
+    Preis-Werte statt nur der einmal taeglichen Hochrechnung, um Kosten der Vergangenheit
+    moeglichst genau zu berechnen - siehe project_zenwave_sync_planning Memory). Waechst
+    ueber die Zeit, Eintraege aelter als 30 Tage werden automatisch entfernt."""
+    preis = data.get("aktueller_preis_ct_kwh")
+    if preis is None:
+        _LOGGER.warning("Kein aktueller Preis zum Speichern in der Preis-Historie vorhanden")
+        return
+    jetzt_iso = datetime.now().astimezone().isoformat(timespec="minutes")
+    bestehend = _get_state("sensor.zenwave_preis_historie_real") or {}
+    punkte = dict((bestehend.get("attributes") or {}).get("punkte") or {})
+    punkte[jetzt_iso] = preis
+    grenze = datetime.now().astimezone() - timedelta(days=30)
+    punkte = {
+        k: v for k, v in punkte.items()
+        if datetime.fromisoformat(k) >= grenze
+    }
+    _set_state(
+        "sensor.zenwave_preis_historie_real",
+        preis,
+        {
+            "unit_of_measurement": "ct/kWh",
+            "friendly_name": "ZenWave: echte Preis-Historie (Schnappschüsse)",
+            "quelle": "ZenWave-Kundenportal (Strompreis-Karte, mehrmals täglich)",
+            "anzahl_punkte": len(punkte),
+            "punkte": punkte,
+        },
+    )
+    _LOGGER.info("Preis-Schnappschuss gespeichert: %s ct/kWh um %s (insgesamt %d Punkte)", preis, jetzt_iso, len(punkte))

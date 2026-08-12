@@ -1,5 +1,5 @@
 name: "ZenWave Sync"
-version: "0.1.15"
+version: "0.1.16"
 slug: "zenwave_sync"
 description: "Liest Verbrauch, Durchschnittspreis und variable Kosten aus dem ZenWave-Kundenportal (Zendure) aus, statt sie aus Shelly/Poweropti zu schaetzen"
 url: "https://github.com/dumdidumger-commits/RB_dienstplan"
@@ -23,6 +23,11 @@ options:
   # Tagesbeginn). Exakt 00:00 bewusst vermieden wegen moeglicher Mitternachts-Umschaltblase
   # im ZenWave-Backend selbst.
   run_time: "23:59"
+  # 12.08.2026 neu (Roland-Wunsch): leichtgewichtiger Preis-Nur-Sync (nur Strompreis-Karte,
+  # kein Verbrauch-Tab) laeuft zusaetzlich alle X Stunden - unabhaengig vom einmal-taeglichen
+  # vollen Sync oben. Speichert echte Preis-Schnappschuesse mit Zeitstempel, damit Kosten der
+  # Vergangenheit auf echten statt hochgerechneten Werten basieren koennen.
+  price_sync_interval_hours: 5
   log_level: "info"
   # Bewusst standardmaessig AN (anders als beim inzwischen eingespielten Vivendi-Add-on) -
   # dieses Add-on ist noch in der Kennenlern-Phase, die ersten echten Laeufe brauchen die
@@ -40,6 +45,7 @@ schema:
   zenwave_password: password
   zenwave_login_url: url
   run_time: match(^([0-1][0-9]|2[0-3]):[0-5][0-9]$)
+  price_sync_interval_hours: float(1,24)
   log_level: list(debug|info|warning|error)
   debug_screenshots: bool
   backfill_dates: str
