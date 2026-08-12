@@ -43,6 +43,34 @@ def notify_info(title: str, message: str, notification_id: str) -> None:
     _create_notification(title, message, notification_id)
 
 
+def notify_push(
+    title: str,
+    message: str,
+    target: str = "mobile_app_iphone_15_promax_roland",
+    notification_id: str | None = None,
+) -> None:
+    """Schickt zusaetzlich eine echte Push-Benachrichtigung ans Handy (12.08.2026, Rolands
+    Wunsch: Dienstplan-Aenderungen zeitnah mitbekommen statt nur in der HA-Glocke zu
+    versauern). Ruft `notify.<target>` auf (Companion-App-Entity). Wenn notification_id
+    gesetzt ist, wird zusaetzlich eine persistent_notification erzeugt, damit ein verpasster
+    Push trotzdem in HA nachlesbar bleibt."""
+    if _SUPERVISOR_TOKEN:
+        try:
+            resp = requests.post(
+                f"{_BASE_URL}/services/notify/{target}",
+                headers={"Authorization": f"Bearer {_SUPERVISOR_TOKEN}", "Content-Type": "application/json"},
+                json={"title": title, "message": message},
+                timeout=15,
+            )
+            resp.raise_for_status()
+        except requests.RequestException:
+            _LOGGER.exception("Konnte Push-Benachrichtigung nicht senden (Ziel: %s)", target)
+    else:
+        _LOGGER.error("Kein SUPERVISOR_TOKEN vorhanden, kann keine Push-Benachrichtigung senden: %s - %s", title, message)
+    if notification_id:
+        _create_notification(title, message, notification_id)
+
+
 def clear_error(notification_id: str = "dienstplan_sync_error") -> None:
     """Entfernt eine zuvor gesetzte Fehlerbenachrichtigung (z.B. nach erfolgreichem Lauf)."""
     if not _SUPERVISOR_TOKEN:
