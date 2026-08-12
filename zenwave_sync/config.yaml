@@ -1,5 +1,5 @@
 name: "ZenWave Sync"
-version: "0.1.10"
+version: "0.1.12"
 slug: "zenwave_sync"
 description: "Liest Verbrauch, Durchschnittspreis und variable Kosten aus dem ZenWave-Kundenportal (Zendure) aus, statt sie aus Shelly/Poweropti zu schaetzen"
 url: "https://github.com/dumdidumger-commits/RB_dienstplan"

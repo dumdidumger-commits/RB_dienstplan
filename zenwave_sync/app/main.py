@@ -87,6 +87,7 @@ def main() -> None:
     setup_logging(options.get("log_level", "info"))
     if options.get("debug_screenshots"):
         os.environ["ZENWAVE_SYNC_DEBUG"] = "1"
+        os.environ["ZENWAVE_EXPLORE_DATES"] = "1"  # TEMPORAER 12.08.2026, siehe zenwave.py
         _LOGGER.info("Debug-Screenshots aktiviert, werden unter /share/zenwave_sync/debug/ gespeichert")
 
     _LOGGER.info("ZenWave-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "07:00"))
@@ -108,7 +109,7 @@ def main() -> None:
     # ABER nur, wenn heute noch kein erfolgreicher Lauf stattgefunden hat (12.08.2026 Fix,
     # siehe LAST_SYNC_MARKER_PATH oben). Verhindert unnoetige Zusatz-Abfragen bei Add-on-
     # Neustarts, die nichts mit dem eigentlichen Sync zu tun haben.
-    if _already_synced_today():
+    if _already_synced_today() and os.environ.get("ZENWAVE_EXPLORE_DATES") != "1":
         _LOGGER.info("Heute bereits erfolgreich synchronisiert, ueberspringe Sofort-Lauf beim Start")
     else:
         run_and_handle_errors()

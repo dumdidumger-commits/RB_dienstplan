@@ -250,6 +250,29 @@ def fetch_intervalldaten(login_url: str, username: str, password: str) -> dict:
             card_text = card.inner_text()
             _debug_shot(page, "07_intervalldaten_karte")
 
+            # TEMPORAER (12.08.2026): Erkundung des "Zeitraum"-Dropdowns, um herauszufinden,
+            # ob/wie sich beliebige vergangene Tage gezielt auswaehlen lassen (statt nur den
+            # beim Laden default gezeigten Zeitraum). Nur aktiv wenn ZENWAVE_EXPLORE_DATES=1,
+            # schreibt Ergebnis nach /share/zenwave_sync/debug/dropdown_explore.html - kein
+            # Einfluss auf den normalen Rueckgabewert/Produktivbetrieb.
+            if os.environ.get("ZENWAVE_EXPLORE_DATES") == "1":
+                try:
+                    zeitraum_btn = card.locator("button:has-text('Zeitraum')").first
+                    zeitraum_btn.click()
+                    page.wait_for_timeout(1000)
+                    os.makedirs(_DEBUG_DIR, exist_ok=True)
+                    page.screenshot(path=f"{_DEBUG_DIR}/dropdown_open.png", full_page=True)
+                    with open(f"{_DEBUG_DIR}/dropdown_explore.html", "w", encoding="utf-8") as f:
+                        f.write(page.content())
+                    # Menu-Items separat als Text, falls vorhanden - leichter auszuwerten als
+                    # das komplette HTML.
+                    menu_items = page.locator("[role=menuitem], [data-slot=dropdown-menu-item]").all_inner_texts()
+                    with open(f"{_DEBUG_DIR}/dropdown_menu_items.txt", "w", encoding="utf-8") as f:
+                        f.write("\n---\n".join(menu_items))
+                    _LOGGER.info("Dropdown-Erkundung: %d Menu-Items gefunden: %s", len(menu_items), menu_items)
+                except Exception:
+                    _LOGGER.exception("Dropdown-Erkundung fehlgeschlagen (nicht fatal)")
+
             preis_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", card_text)
             verbrauch_match = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", card_text)
             kosten_match = re.search(r"Variable Kosten[^\d]*([\d.,]+)\s*€", card_text)
