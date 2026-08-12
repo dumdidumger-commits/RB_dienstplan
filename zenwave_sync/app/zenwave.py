@@ -268,41 +268,64 @@ def fetch_intervalldaten(
             # rechts mit anklickbaren Tageszahlen, unten "Ausgewaehlt: <Label>".
             if requested_dates:
                 for target in requested_dates:
-                    zeitraum_btn = card.locator("button:has-text('Zeitraum')").first
-                    zeitraum_btn.click()
-                    page.wait_for_timeout(500)
-                    calendar_popup = page.locator("text=Ausgewählt:").locator(
-                        "xpath=ancestor::*[self::div][.//table or .//*[contains(@class,'grid')]][1]"
-                    ).first
-                    # Ggf. Monat wechseln, falls das Zieldatum nicht im aktuell gezeigten
-                    # Monat liegt (Kalenderkopf "August 2026" o.ae. mit </> Pfeilen daneben).
-                    month_label = calendar_popup.locator("text=/^[A-Za-zäöü]+ \\d{4}$/").first
-                    for _ in range(6):  # Sicherheitslimit gegen Endlosschleife
-                        current_label = month_label.inner_text()
-                        target_label = f"{_MONTH_NAMES_DE[target.month - 1]} {target.year}"
-                        if current_label == target_label:
-                            break
-                        # Zurueckblaettern (Pfeil links = vorheriger Monat) - fuer unseren
-                        # Anwendungsfall (kuerzlich vergangene Tage) reicht "rueckwaerts".
-                        calendar_popup.locator("button").first.click()
-                        page.wait_for_timeout(300)
-                    day_cell = calendar_popup.locator(
-                        f"xpath=.//button[normalize-space(text())='{target.day}']"
-                    ).first
-                    day_cell.click()
-                    page.wait_for_timeout(800)
-                    fresh_card_text = card.inner_text()
-                    fresh_verbrauch = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", fresh_card_text)
-                    fresh_kosten = re.search(r"Variable Kosten[^\d]*([\d.,]+)\s*€", fresh_card_text)
-                    fresh_preis = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", fresh_card_text)
-                    specific_days_result[target.isoformat()] = {
-                        "verbrauch_kwh": _parse_de_number(fresh_verbrauch.group(1)) if fresh_verbrauch else None,
-                        "kosten_eur": _parse_de_number(fresh_kosten.group(1)) if fresh_kosten else None,
-                        "durchschnittspreis_ct_kwh": _parse_de_number(fresh_preis.group(1)) if fresh_preis else None,
-                        "raw_card_text": fresh_card_text,
-                    }
-                    _debug_shot(page, f"day_{target.isoformat()}")
-                    _LOGGER.info("Tag %s gelesen: %s", target.isoformat(), specific_days_result[target.isoformat()])
+                    try:
+                        zeitraum_btn = card.locator("button:has-text('Zeitraum')").first
+                        zeitraum_btn.click()
+                        page.wait_for_timeout(500)
+                        calendar_popup = page.locator("text=Ausgewählt:").locator(
+                            "xpath=ancestor::*[self::div][.//table or .//*[contains(@class,'grid')]][1]"
+                        ).first
+                        # Ggf. Monat wechseln, falls das Zieldatum nicht im aktuell gezeigten
+                        # Monat liegt (Kalenderkopf "August 2026" o.ae. mit </> Pfeilen daneben).
+                        month_label = calendar_popup.locator("text=/^[A-Za-zäöü]+ \\d{4}$/").first
+                        for _ in range(6):  # Sicherheitslimit gegen Endlosschleife
+                            current_label = month_label.inner_text()
+                            target_label = f"{_MONTH_NAMES_DE[target.month - 1]} {target.year}"
+                            if current_label == target_label:
+                                break
+                            # Zurueckblaettern (Pfeil links = vorheriger Monat) - fuer unseren
+                            # Anwendungsfall (kuerzlich vergangene Tage) reicht "rueckwaerts".
+                            calendar_popup.locator("button").first.click()
+                            page.wait_for_timeout(300)
+                        day_cell = calendar_popup.locator(
+                            f"xpath=.//button[normalize-space(text())='{target.day}']"
+                        ).first
+                        # 12.08.2026 wichtiger Fix: Das ist ein ZEITRAUM-Waehler (Start+Ende),
+                        # kein Einzeltag-Picker - nach dem ersten Klick steht unten "Zweites
+                        # Datum waehlen: ...". Denselben Tag ein zweites Mal klicken schliesst
+                        # den Bereich als Ein-Tages-Zeitraum ab (per Screenshot verifiziert).
+                        day_cell.click()
+                        page.wait_for_timeout(400)
+                        day_cell.click()
+                        page.wait_for_timeout(800)
+                        fresh_card_text = card.inner_text()
+                        fresh_zeitraum = re.search(r"Zeitraum:\s*([^\n]+)", fresh_card_text)
+                        gelesenes_label = fresh_zeitraum.group(1).strip() if fresh_zeitraum else None
+                        erwartetes_label = f"{target.day} {_MONTH_NAMES_DE[target.month - 1][:3]}."
+                        if gelesenes_label and not gelesenes_label.startswith(str(target.day)):
+                            _LOGGER.warning(
+                                "Tag %s: gelesenes Zeitraum-Label '%s' passt nicht zum "
+                                "angefragten Tag (erwartet etwas wie '%s') - Wert trotzdem "
+                                "gespeichert, bitte pruefen",
+                                target.isoformat(), gelesenes_label, erwartetes_label,
+                            )
+                        fresh_verbrauch = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", fresh_card_text)
+                        fresh_kosten = re.search(r"Variable Kosten[^\d]*([\d.,]+)\s*€", fresh_card_text)
+                        fresh_preis = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", fresh_card_text)
+                        specific_days_result[target.isoformat()] = {
+                            "verbrauch_kwh": _parse_de_number(fresh_verbrauch.group(1)) if fresh_verbrauch else None,
+                            "kosten_eur": _parse_de_number(fresh_kosten.group(1)) if fresh_kosten else None,
+                            "durchschnittspreis_ct_kwh": _parse_de_number(fresh_preis.group(1)) if fresh_preis else None,
+                            "gelesenes_zeitraum_label": gelesenes_label,
+                            "raw_card_text": fresh_card_text,
+                        }
+                        _debug_shot(page, f"day_{target.isoformat()}")
+                        _LOGGER.info("Tag %s gelesen: %s", target.isoformat(), specific_days_result[target.isoformat()])
+                    except Exception:
+                        # Ein fehlgeschlagener Einzeltag soll nicht den ganzen Lauf abbrechen -
+                        # weiter mit dem naechsten angefragten Tag.
+                        _LOGGER.exception("Konnte Tag %s nicht auslesen, ueberspringe", target.isoformat())
+                        _debug_shot(page, f"day_{target.isoformat()}_fehler", html=True)
 
             preis_match = re.search(r"Ø\s*Preis[^\d]*([\d.,]+)\s*ct", card_text)
             verbrauch_match = re.search(r"Verbrauch[^\d]*([\d.,]+)\s*kWh", card_text)
