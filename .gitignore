@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+debug/
+*/debug/
+*_token.txt
+*.ics
