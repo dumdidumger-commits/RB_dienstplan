@@ -18,6 +18,13 @@ import zenwave
 from notify import clear_error, notify_error
 
 OPTIONS_PATH = "/data/options.json"
+# 12.08.2026: Merkt sich das Datum des letzten erfolgreichen Sync-Laufs in /data (ueberlebt
+# Add-on-Neustarts, anders als eine In-Memory-Variable). Verhindert, dass ein Add-on-Neustart
+# (z.B. ausgeloest durch einen unabhaengigen HA-Core-Neustart) eine zusaetzliche, ungeplante
+# Zweit-Abfrage am selben Tag ausloest - das fuehrte dazu, dass "gestrige" Intervalldaten bei
+# mehreren Laeufen am selben Tag mit unterschiedlichen (von ZenWave zwischenzeitlich noch
+# nachkorrigierten) Werten ueberschrieben wurden, siehe project_zenwave_sync_planning Memory.
+LAST_SYNC_MARKER_PATH = "/data/last_sync_date.txt"
 
 _LOGGER = logging.getLogger("zenwave_sync")
 
@@ -25,6 +32,19 @@ _LOGGER = logging.getLogger("zenwave_sync")
 def load_options() -> dict:
     with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _already_synced_today() -> bool:
+    try:
+        with open(LAST_SYNC_MARKER_PATH, "r", encoding="utf-8") as f:
+            return f.read().strip() == datetime.now().date().isoformat()
+    except FileNotFoundError:
+        return False
+
+
+def _mark_synced_today() -> None:
+    with open(LAST_SYNC_MARKER_PATH, "w", encoding="utf-8") as f:
+        f.write(datetime.now().date().isoformat())
 
 
 def setup_logging(level_name: str) -> None:
@@ -50,6 +70,7 @@ def sync_once(options: dict) -> None:
     ha_sync.publish_intervalldaten(data)
     ha_sync.publish_preisaufschlag(data)
     clear_error()
+    _mark_synced_today()
 
 
 def seconds_until_next_run(run_time: str) -> float:
@@ -84,8 +105,13 @@ def main() -> None:
             notify_error("ZenWave-Sync: Unerwarteter Fehler", str(exc))
 
     # Einmal sofort beim (Neu-)Start laufen lassen, nicht bis zu 24h auf run_time warten -
-    # wichtig gerade jetzt fuer den ersten echten Testlauf.
-    run_and_handle_errors()
+    # ABER nur, wenn heute noch kein erfolgreicher Lauf stattgefunden hat (12.08.2026 Fix,
+    # siehe LAST_SYNC_MARKER_PATH oben). Verhindert unnoetige Zusatz-Abfragen bei Add-on-
+    # Neustarts, die nichts mit dem eigentlichen Sync zu tun haben.
+    if _already_synced_today():
+        _LOGGER.info("Heute bereits erfolgreich synchronisiert, ueberspringe Sofort-Lauf beim Start")
+    else:
+        run_and_handle_errors()
 
     while True:
         wait_s = seconds_until_next_run(options.get("run_time", "07:00"))

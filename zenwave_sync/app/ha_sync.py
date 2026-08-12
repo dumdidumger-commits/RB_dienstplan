@@ -128,6 +128,29 @@ def publish_preisaufschlag(data: dict) -> None:
     )
 
 
+def _parse_zeitraum_label_to_iso(label: str) -> str | None:
+    """Parst ein Zeitraum-Label wie "11 Aug." zu einem ISO-Datum ("2026-08-11").
+
+    Das Label enthaelt kein Jahr. Da die Intervalldaten-Karte immer einen kuerzlich
+    vergangenen Tag zeigt, wird das aktuelle Jahr angenommen - ausser das ergaebe ein Datum in
+    der Zukunft (Jahreswechsel-Fall), dann wird das Vorjahr genommen.
+    """
+    if not label:
+        return None
+    m = re.match(r"(\d{1,2})\.?\s+(\w{3})\.?", label.strip())
+    if not m:
+        return None
+    day, mon_abbr = m.groups()
+    month = _MONTH_MAP.get(mon_abbr)
+    if not month:
+        return None
+    today = datetime.now().date()
+    candidate = datetime(today.year, month, int(day)).date()
+    if candidate > today:
+        candidate = datetime(today.year - 1, month, int(day)).date()
+    return candidate.isoformat()
+
+
 def publish_intervalldaten(data: dict) -> None:
     """Schreibt sensor.zenwave_real_verbrauch / _kosten / _durchschnittspreis.
 
@@ -137,15 +160,19 @@ def publish_intervalldaten(data: dict) -> None:
     bevor sie ihn statt der Shelly/Poweropti-Schaetzung anzeigen.
     """
     label = data.get("zeitraum_label") or "unbekannt"
-    # ISO-Datum zusaetzlich zum deutschen Label ("8 Aug.") - das Label selbst enthaelt kein
-    # Jahr und ist umstaendlich in Jinja/JS zu parsen. Die Intervalldaten-Karte zeigt beim
-    # Laden verlaesslich den Vortag (bisher an jedem Testlauf bestaetigt) - daher einfach
-    # "heute minus 1 Tag" zum Zeitpunkt dieses Sync-Laufs, statt das Label zu parsen. Wird von
-    # template.yaml (sensor.energieprognose_tag_netzbezug/_kosten) und app.html
-    # (renderVbTagSummary) genutzt, um zu erkennen, ob der gewaehlte Tag-Offset genau diesem
-    # Datum entspricht - nur dann werden die echten statt der geschaetzten Werte angezeigt
-    # (Rolands Wunsch 09.08.2026).
-    datum_iso = (datetime.now().date() - timedelta(days=1)).isoformat()
+    # ISO-Datum aus dem tatsaechlich gescrapten Label ("11 Aug.") ableiten - NICHT mehr blind
+    # "heute minus 1 Tag" annehmen (Bug, 12.08.2026 gefunden: fuehrte bei mehrfachen Sync-
+    # Laeufen am selben Tag, z.B. durch HA-Core-Neustarts ausgeloest, zu falsch beschrifteten
+    # Werten, sobald die Intervalldaten-Karte mal nicht exakt den Vortag zeigte). Das Label
+    # selbst enthaelt kein Jahr - wird ueber "naeher an heute" (aktuelles vs. voriges Jahr)
+    # inferiert, gleiches Muster wie _epex_price_ct_kwh_at() oben.
+    datum_iso = _parse_zeitraum_label_to_iso(label)
+    if datum_iso is None:
+        _LOGGER.warning(
+            "Konnte Zeitraum-Label '%s' nicht parsen, falle auf 'heute minus 1 Tag' zurueck",
+            label,
+        )
+        datum_iso = (datetime.now().date() - timedelta(days=1)).isoformat()
     common_attrs = {
         "zeitraum": label,
         "datum": datum_iso,
