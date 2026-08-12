@@ -298,3 +298,57 @@ def publish_preis_snapshot(data: dict) -> None:
         },
     )
     _LOGGER.info("Preis-Schnappschuss gespeichert: %s ct/kWh um %s (insgesamt %d Punkte)", preis, jetzt_iso, len(punkte))
+
+
+def publish_kalibrierungsvergleich(data: dict) -> None:
+    """Vergleicht den echten 'Aktuell'-Preis (von der ZenWave-Seite) mit dem, was unsere
+    eigene Hochrechnung (sensor.zenwave_preiskurve_real = EPEX-Rohpreis + fester Aufschlag,
+    siehe template.yaml) fuer denselben Moment liefert, und speichert die Abweichung mit
+    Zeitstempel in sensor.zenwave_kalibrierung_delta (12.08.2026 neu, Roland-Idee: statt
+    alle 15 Min echt einzuloggen lieber bei den bestehenden 5-stuendigen Laeufen bleiben und
+    ueber die Zeit pruefen, ob die Hochrechnung systematisch daneben liegt - Muster wie bei
+    der Solarprognose-Kalibrierung, siehe solar_forecast_calibration Memory). Wird bewusst
+    NUR geloggt/gesammelt, keine automatische Korrektur - erst wenn genug Datenpunkte da
+    sind, entscheiden wir anhand des Durchschnitts, ob/wie stark der Aufschlag nachjustiert
+    werden sollte."""
+    real = data.get("aktueller_preis_ct_kwh")
+    if real is None:
+        return
+    hochrechnung_state = _get_state("sensor.zenwave_preiskurve_real")
+    if hochrechnung_state is None or hochrechnung_state.get("state") in (None, "unknown", "unavailable"):
+        _LOGGER.warning("sensor.zenwave_preiskurve_real noch nicht verfuegbar, ueberspringe Kalibrierungsvergleich")
+        return
+    try:
+        hochrechnung = float(hochrechnung_state["state"])
+    except (TypeError, ValueError):
+        return
+    delta = round(real - hochrechnung, 3)
+    jetzt_iso = datetime.now().astimezone().isoformat(timespec="minutes")
+    bestehend = _get_state("sensor.zenwave_kalibrierung_delta") or {}
+    punkte = dict((bestehend.get("attributes") or {}).get("punkte") or {})
+    punkte[jetzt_iso] = delta
+    grenze = datetime.now().astimezone() - timedelta(days=30)
+    punkte = {
+        k: v for k, v in punkte.items()
+        if datetime.fromisoformat(k) >= grenze
+    }
+    durchschnitt = round(sum(punkte.values()) / len(punkte), 3) if punkte else None
+    _set_state(
+        "sensor.zenwave_kalibrierung_delta",
+        delta,
+        {
+            "unit_of_measurement": "ct/kWh",
+            "friendly_name": "ZenWave: Hochrechnung-Abweichung (echt minus berechnet)",
+            "quelle": "Vergleich ZenWave-Kundenportal 'Aktuell' vs. sensor.zenwave_preiskurve_real",
+            "echter_preis_ct_kwh": real,
+            "hochgerechneter_preis_ct_kwh": hochrechnung,
+            "durchschnitt_ct_kwh": durchschnitt,
+            "anzahl_punkte": len(punkte),
+            "punkte": punkte,
+        },
+    )
+    _LOGGER.info(
+        "Kalibrierungsvergleich: echt=%s ct/kWh, hochgerechnet=%s ct/kWh, Abweichung=%s ct/kWh "
+        "(Durchschnitt ueber %d Punkte: %s)",
+        real, hochrechnung, delta, len(punkte), durchschnitt,
+    )

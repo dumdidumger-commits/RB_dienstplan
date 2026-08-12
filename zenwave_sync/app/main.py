@@ -115,6 +115,7 @@ def sync_once(options: dict) -> None:
     ha_sync.publish_intervalldaten(data)
     ha_sync.publish_preisaufschlag(data)
     ha_sync.publish_preis_snapshot(data)
+    ha_sync.publish_kalibrierungsvergleich(data)
     clear_error()
     _mark_synced_today()
 
@@ -137,6 +138,7 @@ def price_sync_once(options: dict) -> None:
     )
     ha_sync.publish_preis_snapshot(data)
     ha_sync.publish_preisaufschlag(data)
+    ha_sync.publish_kalibrierungsvergleich(data)
     clear_error(notification_id="zenwave_sync_price_error")
 
 
