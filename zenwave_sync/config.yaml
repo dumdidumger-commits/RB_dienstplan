@@ -1,5 +1,5 @@
 name: "ZenWave Sync"
-version: "0.1.14"
+version: "0.1.15"
 slug: "zenwave_sync"
 description: "Liest Verbrauch, Durchschnittspreis und variable Kosten aus dem ZenWave-Kundenportal (Zendure) aus, statt sie aus Shelly/Poweropti zu schaetzen"
 url: "https://github.com/dumdidumger-commits/RB_dienstplan"
@@ -17,7 +17,12 @@ options:
   zenwave_username: ""
   zenwave_password: ""
   zenwave_login_url: "https://zenwave.customerportal.energy/"
-  run_time: "07:00"
+  # 12.08.2026 auf 23:59 umgestellt (Roland-Wunsch): gibt ZenWaves Backend fast den ganzen
+  # Tag Zeit, die Intervalldaten zu verarbeiten, bevor wir abfragen - naeher am finalen Wert
+  # als eine Abfrage kurz nach Mitternacht (7 Uhr hatte nur 7h Verarbeitungszeit seit
+  # Tagesbeginn). Exakt 00:00 bewusst vermieden wegen moeglicher Mitternachts-Umschaltblase
+  # im ZenWave-Backend selbst.
+  run_time: "23:59"
   log_level: "info"
   # Bewusst standardmaessig AN (anders als beim inzwischen eingespielten Vivendi-Add-on) -
   # dieses Add-on ist noch in der Kennenlern-Phase, die ersten echten Laeufe brauchen die
