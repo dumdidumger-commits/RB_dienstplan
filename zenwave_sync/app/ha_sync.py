@@ -42,6 +42,11 @@ def _get_state(entity_id: str) -> dict | None:
         headers={"Authorization": f"Bearer {_SUPERVISOR_TOKEN}"},
         timeout=15,
     )
+    # 12.08.2026 Fix: 404 ist der ganz normale Fall "Entity existiert noch nicht" (z.B. beim
+    # allerersten Schreiben eines neuen Sensors) - kein echter Fehler, einfach None liefern
+    # statt einer HTTPError-Exception.
+    if resp.status_code == 404:
+        return None
     resp.raise_for_status()
     return resp.json()
 
