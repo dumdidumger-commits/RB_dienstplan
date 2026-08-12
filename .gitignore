@@ -4,3 +4,10 @@ debug/
 */debug/
 *_token.txt
 *.ics
+# Persistente Laufzeit-Config (12.08.2026: config/ liegt live direkt unter
+# /share/dienstplan_sync/{dienstplan_sync,zenwave_sync}/config/, im selben Verzeichnis wie
+# dieses Repo - versehentlich mal per "git add -A" mitgezogen worden, siehe Chat/Memory).
+# .example-Vorlagen bleiben bewusst getrackt.
+config/token.json
+config/kuerzel_mapping.yaml
+!config/kuerzel_mapping.yaml.example
