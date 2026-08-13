@@ -1,7 +1,15 @@
-# Vivendi Dienstplan → Google Calendar Sync
+# Vivendi Dienstplan → ICS-Kalenderabo
 
-Home-Assistant-Add-on, das taeglich automatisch den Vivendi-Dienstplan herunterlaedt und mit
-einem dedizierten Google-Kalender ("Dienstplan") abgleicht.
+Home-Assistant-Add-on, das taeglich automatisch den Vivendi-Dienstplan herunterlaedt und als
+ICS-Kalenderfeed bereitstellt (`ics_export.py`), den beliebige Kalender-Apps (Google Calendar,
+Alexa, ...) per "Von URL abonnieren" einbinden koennen.
+
+**13.08.2026 (Roland-Wunsch, "das Ding brauchen wir nicht mehr"):** Die urspruengliche
+direkte Google-Calendar-API-Anbindung (OAuth, Insert/Update/Delete-Sync in einen dedizierten
+Kalender) wurde komplett entfernt. Grund: der Google-Cloud-Testzugang gab nur 7 Tage gueltige
+Refresh-Tokens aus und lief staendig ab, waehrend das ICS-Kalenderabo (urspruenglich nur als
+Backup gedacht) sich als der zuverlaessigere Weg erwiesen hat. Siehe
+`project_vivendi_dienstplan_addon` Memory fuer die volle Historie.
 
 ## Status (Stand: 30.07.2026) — voll funktionsfaehig, Ende-zu-Ende live verifiziert
 
@@ -52,56 +60,16 @@ dienstplan_sync/
   config.yaml              Add-on-Manifest (Optionen-Schema)
   Dockerfile
   requirements.txt
-  setup_oauth.py           Einmaliges LOKALES Setup-Skript (siehe unten) - NICHT im Container
   app/
     main.py                Einstiegspunkt, Scheduler-Loop
     vivendi.py              Login + Export-Download (Playwright, live verifiziert 30.07.2026)
     parser.py               Excel-Parser
-    calendar_sync.py        Google-Calendar-Anbindung + Sync-Logik
-    notify.py                HA-persistent_notification bei Fehlern
-    test_calendar.py        Eigenstaendiger Test NUR fuer den Google-Teil (siehe unten)
+    calendar_sync.py        Event-ID/-Body-Hilfsfunktionen (kein Google-API-Teil mehr)
+    ics_export.py           ICS-Kalenderfeed-Export (der eigentliche Sync-Weg)
+    notify.py                HA-persistent_notification + Push bei Fehlern/Aenderungen
   config/
     kuerzel_mapping.yaml.example   Vorlage fuer die Schicht-Kuerzel-Zuordnung
 ```
-
-## Google-OAuth-Ersteinrichtung (einmalig, auf DEINEM Computer, nicht auf HAOS)
-
-**Warum lokal und nicht im Add-on?** Der interaktive Consent-Flow oeffnet einen Browser und
-wartet auf einen Redirect an `http://localhost:<port>`. Wuerde das im Add-on-Container (auf
-dem HAOS-Rechner) laufen, wuerde "localhost" aus Sicht deines Browsers (vermutlich ein
-anderes Geraet) ins Leere zeigen. Deshalb: einmal lokal ausfuehren, das Ergebnis danach in
-den Share-Ordner kopieren.
-
-1. **Google Cloud Console** (https://console.cloud.google.com/):
-   - Neues Projekt anlegen (oder ein bestehendes verwenden)
-   - "APIs & Dienste" → "Bibliothek" → **Google Calendar API** aktivieren
-   - "APIs & Dienste" → "Anmeldedaten" → "Anmeldedaten erstellen" → "OAuth-Client-ID"
-   - Anwendungstyp: **Desktop-App**
-   - JSON-Datei herunterladen, als `client_secret.json` speichern
-2. Auf deinem eigenen Rechner (nicht HAOS):
-   ```
-   pip install google-auth-oauthlib
-   ```
-   `client_secret.json` neben `setup_oauth.py` legen, dann:
-   ```
-   python3 setup_oauth.py
-   ```
-   Browser oeffnet sich, Consent bestaetigen. Erzeugt `token.json`.
-3. `token.json` nach `/share/dienstplan_sync/config/token.json` auf dem HAOS-Rechner kopieren
-   (z.B. per Samba- oder File-Editor-Add-on).
-
-Der laufende Add-on-Container liest danach nur noch diese Datei und erneuert den
-Zugriffstoken selbststaendig ueber den enthaltenen Refresh-Token - kein Browser mehr noetig.
-
-**Google-Teil unabhaengig testen:** Ueber die "Advanced SSH & Web Terminal"-Add-on-Konsole in
-den laufenden `dienstplan_sync`-Container wechseln:
-
-```
-docker exec -it addon_local_dienstplan_sync python3 /app/test_calendar.py
-```
-
-Meldet der Befehl "Kalender 'Dienstplan' vorhanden" und zeigt eine ID an, funktioniert der
-komplette Google-Teil (Token, Berechtigung, Kalender-Erstellung).
 
 ## Kuerzel-Mapping anpassen
 

@@ -1,70 +1,29 @@
-"""Google-Calendar-Anbindung: Credentials laden, Kalender finden/anlegen, Schichten
-synchronisieren (Insert/Update/Delete, keine Duplikate).
+"""Event-ID/Event-Body-Hilfsfunktionen fuer Vivendi-Schichten.
 
-Voraussetzung: token.json existiert bereits unter TOKEN_PATH (siehe setup_oauth.py im
-Repo-Root - das lokale, einmalige Setup-Skript). Dieses Modul selbst startet NIE einen
-interaktiven Browser-Flow, sondern laedt/erneuert ausschliesslich den vorhandenen Token.
+13.08.2026: Die frueher hier lebende Google-Calendar-API-Anbindung (OAuth-Credentials,
+Kalender finden/anlegen, Insert/Update/Delete-Sync) wurde komplett entfernt (Roland-Wunsch:
+"das Ding brauchen wir nicht mehr, kannst Du es auch entfernen" - der Google-Cloud-Testzugang
+gab nur 7 Tage gueltige Refresh-Tokens aus und lief staendig ab, siehe
+project_vivendi_dienstplan_addon Memory). ICS-Kalenderabo (ics_export.py) ist seitdem der
+einzige Weg, wie der Dienstplan in Google Calendar/Alexa landet.
+
+_event_id() und _to_event_body() bleiben hier, weil sie nicht Google-spezifisch sind -
+_event_id() liefert nur eine stabile ID zur Aenderungserkennung (main.py,
+_notify_shift_changes) und ics_export.py nutzt beide fuer den ICS-Export.
 """
 
 from __future__ import annotations
 
 import hashlib
-import logging
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 from parser import Shift
 
-_LOGGER = logging.getLogger(__name__)
-
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
-CALENDAR_NAME = "Dienstplan"
 # Alle Schichtzeiten aus dem Vivendi-Export sind lokale deutsche Zeit. Ohne explizite
-# Zeitzone wuerde Google Calendar naive dateTime-Strings entweder ablehnen oder (schlimmer)
+# Zeitzone wuerde ein ICS-Consumer naive dateTime-Strings entweder ablehnen oder (schlimmer)
 # stillschweigend als UTC interpretieren - das haette jede Schicht um 1-2 Stunden verschoben.
 LOCAL_TZ = ZoneInfo("Europe/Berlin")
-
-
-class MissingTokenError(Exception):
-    """token.json fehlt - einmaliges Setup (setup_oauth.py) wurde noch nicht durchgefuehrt."""
-
-
-def load_credentials(token_path: str) -> Credentials:
-    try:
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-    except FileNotFoundError as exc:
-        raise MissingTokenError(
-            f"{token_path} nicht gefunden. Bitte einmalig setup_oauth.py lokal ausfuehren "
-            "und die erzeugte token.json dorthin kopieren (siehe README)."
-        ) from exc
-
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(token_path, "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
-
-    return creds
-
-
-def get_or_create_calendar_id(service, calendar_name: str = CALENDAR_NAME) -> str:
-    page_token = None
-    while True:
-        result = service.calendarList().list(pageToken=page_token).execute()
-        for entry in result.get("items", []):
-            if entry.get("summary") == calendar_name:
-                return entry["id"]
-        page_token = result.get("nextPageToken")
-        if not page_token:
-            break
-
-    _LOGGER.info("Kalender %r nicht gefunden, lege ihn neu an", calendar_name)
-    created = service.calendars().insert(body={"summary": calendar_name}).execute()
-    return created["id"]
 
 
 def _event_id(shift: Shift) -> str:
@@ -107,73 +66,3 @@ def _to_event_body(shift: Shift) -> dict:
         "end": {"date": (shift.datum + timedelta(days=1)).isoformat()},
     }
 
-
-@dataclass
-class SyncResult:
-    inserted: int = 0
-    updated: int = 0
-    deleted: int = 0
-    unchanged: int = 0
-
-
-def sync_shifts(service, calendar_id: str, shifts: list[Shift], sync_window_start: date, sync_window_end: date) -> SyncResult:
-    """Gleicht die uebergebenen Schichten mit dem Kalender ab. Alle Events im Kalender
-    innerhalb [sync_window_start, sync_window_end), deren Event-ID nicht mehr im aktuellen
-    Datensatz vorkommt, werden geloescht (deckt verschobene/entfallene Schichten ab).
-    """
-    result = SyncResult()
-
-    desired = {}
-    for shift in shifts:
-        if not (sync_window_start <= shift.datum < sync_window_end):
-            continue
-        desired[_event_id(shift)] = shift
-
-    existing_ids: set[str] = set()
-    page_token = None
-    time_min = datetime.combine(sync_window_start, datetime.min.time(), tzinfo=LOCAL_TZ).isoformat()
-    time_max = datetime.combine(sync_window_end, datetime.min.time(), tzinfo=LOCAL_TZ).isoformat()
-    while True:
-        resp = service.events().list(
-            calendarId=calendar_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            pageToken=page_token,
-            singleEvents=True,
-            maxResults=2500,
-        ).execute()
-        for event in resp.get("items", []):
-            event_id = event.get("id", "")
-            if event_id.startswith("dp"):  # nur von diesem Add-on verwaltete Events anfassen
-                existing_ids.add(event_id)
-        page_token = resp.get("nextPageToken")
-        if not page_token:
-            break
-
-    for event_id, shift in desired.items():
-        body = _to_event_body(shift)
-        if event_id in existing_ids:
-            current = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-            if (current.get("summary") == body["summary"]
-                    and current.get("description", "") == body["description"]
-                    and current.get("start") == body["start"]
-                    and current.get("end") == body["end"]):
-                result.unchanged += 1
-                continue
-            service.events().update(calendarId=calendar_id, eventId=event_id, body=body).execute()
-            result.updated += 1
-        else:
-            body["id"] = event_id
-            service.events().insert(calendarId=calendar_id, body=body).execute()
-            result.inserted += 1
-
-    for event_id in existing_ids - desired.keys():
-        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-        result.deleted += 1
-
-    return result
-
-
-def build_service(token_path: str):
-    creds = load_credentials(token_path)
-    return build("calendar", "v3", credentials=creds)

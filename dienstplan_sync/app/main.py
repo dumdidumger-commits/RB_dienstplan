@@ -18,7 +18,6 @@ from notify import clear_error, notify_error, notify_info, notify_push
 OPTIONS_PATH = "/data/options.json"
 DIENSTPLAN_CACHE_PATH = "/data/last_dienstplan.xlsx"
 DIENSTPLAN_CACHE_PATH_NEXT_MONTH = "/data/last_dienstplan_folgemonat.xlsx"
-TOKEN_PATH = "/share/dienstplan_sync/config/token.json"
 KUERZEL_MAPPING_PATH = "/share/dienstplan_sync/config/kuerzel_mapping.yaml"
 # 12.08.2026 neu (Roland-Wunsch): merkt sich den Schicht-Stand des letzten Laufs, um
 # Aenderungen (gestrichene/neue Dienste) per Push zu melden - siehe _notify_shift_changes().
@@ -196,49 +195,15 @@ def sync_once(options: dict) -> None:
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dienstplan-Aenderungserkennung fehlgeschlagen")
 
-    # Kernsync (Download/Parsen/ICS) ist an dieser Stelle bereits durch - loescht eine evtl.
-    # noch offene generische Fehlerbenachrichtigung eines fruehereren Laufs. Der Google-API-
-    # Teil unten hat seine EIGENE Fehlerbenachrichtigung (dienstplan_sync_google_api_error).
+    # Kernsync (Download/Parsen/ICS) ist an dieser Stelle durch - loescht eine evtl. noch
+    # offene generische Fehlerbenachrichtigung eines frueheren Laufs.
     clear_error()
 
-    # 12.08.2026 (Rolands Wunsch): Google-Kalender-API ist nur noch "nice to have", nicht
-    # mehr der verlaessliche Hauptweg (ICS oben) - Grund: der Google-Cloud-Testzugang gibt
-    # nur 7 Tage gueltige Refresh-Tokens aus, laeuft also periodisch ab (siehe
-    # project_vivendi_dienstplan_addon Memory). Eigener try/except mit eigener, ruhigerer
-    # Fehlermeldung statt des lauten generischen Fehlers - ICS oben lief ja bereits.
-    try:
-        service = calendar_sync.build_service(TOKEN_PATH)
-        calendar_id = calendar_sync.get_or_create_calendar_id(service)
-
-        months_ahead = int(options.get("sync_months_ahead", 2))
-        window_start = date.today().replace(day=1)
-        # naiver, aber robuster Monats-Vorschub ohne zusaetzliche Abhaengigkeit (z.B. dateutil)
-        m = window_start.month - 1 + months_ahead
-        window_end = window_start.replace(year=window_start.year + m // 12, month=m % 12 + 1)
-
-        result = calendar_sync.sync_shifts(service, calendar_id, shifts, window_start, window_end)
-        _LOGGER.info(
-            "Sync fertig: %d neu, %d aktualisiert, %d geloescht, %d unveraendert",
-            result.inserted, result.updated, result.deleted, result.unchanged,
-        )
-        clear_error(notification_id="dienstplan_sync_google_api_error")
-    except calendar_sync.MissingTokenError as exc:
-        _LOGGER.exception("Google-Token fehlt")
-        notify_error(
-            "Dienstplan-Sync: Google-Anmeldung fehlt",
-            str(exc),
-            notification_id="dienstplan_sync_google_api_error",
-        )
-    except Exception as exc:  # noqa: BLE001 - ICS oben ist der eigentliche Hauptweg
-        _LOGGER.exception("Google-Kalender-API-Sync fehlgeschlagen (ICS oben lief unabhaengig davon)")
-        notify_error(
-            "Dienstplan-Sync: Google-Kalender-Kopie veraltet",
-            f"Die zusaetzliche Google-Kalender-API-Synchronisation ist fehlgeschlagen: {exc}. "
-            "Der Hauptweg (ICS-Kalender-Abo) lief unabhaengig davon normal weiter. Bei "
-            "'invalid_grant'/Token-Fehlern: OAuth-Testzugang ist abgelaufen (7-Tage-Limit), "
-            "siehe setup_oauth.py-Anleitung fuer die einmalige lokale Neuautorisierung.",
-            notification_id="dienstplan_sync_google_api_error",
-        )
+    # 13.08.2026 (Roland-Wunsch): Google-Calendar-API-Sync komplett entfernt ("das Ding
+    # brauchen wir nicht mehr") - lief hier vorher als "nice to have" mit eigener, ruhigerer
+    # Fehlermeldung (dienstplan_sync_google_api_error), aber selbst DIE kam Roland noch als
+    # Benachrichtigung zu haeufig unter. ICS-Kalenderabo (oben) ist jetzt der einzige Weg.
+    # Siehe project_vivendi_dienstplan_addon Memory fuer die volle Historie.
 
 
 def seconds_until_next_run(run_time: str) -> float:
@@ -259,6 +224,13 @@ def main() -> None:
 
     _LOGGER.info("Dienstplan-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "06:00"))
 
+    # 13.08.2026 einmaliger Aufraeum-Schritt: eine evtl. noch offene alte
+    # "dienstplan_sync_google_api_error"-Benachrichtigung aus der Zeit, als der Google-API-Teil
+    # noch existierte, wird nie wieder aktiv geloescht (die Automation, die sie erzeugt hat, gibt
+    # es nicht mehr) - deshalb hier einmal beim Start aufraeumen, statt sie fuer immer stehen zu
+    # lassen.
+    clear_error(notification_id="dienstplan_sync_google_api_error")
+
     def run_and_handle_errors() -> None:
         try:
             sync_once(options)
@@ -268,9 +240,6 @@ def main() -> None:
         except vivendi.VivendiExportError as exc:
             _LOGGER.exception("Vivendi-Export fehlgeschlagen")
             notify_error("Dienstplan-Sync: Export fehlgeschlagen", str(exc))
-        except calendar_sync.MissingTokenError as exc:
-            _LOGGER.exception("Google-Token fehlt")
-            notify_error("Dienstplan-Sync: Google-Anmeldung fehlt", str(exc))
         except Exception as exc:  # noqa: BLE001 - bewusst breit, damit der Loop nie stirbt
             _LOGGER.exception("Unerwarteter Fehler im Sync-Lauf")
             notify_error("Dienstplan-Sync: Unerwarteter Fehler", str(exc))

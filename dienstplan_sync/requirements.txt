@@ -2,9 +2,9 @@ requests==2.32.3
 pandas==2.2.3
 openpyxl==3.1.5
 PyYAML==6.0.2
-google-api-python-client==2.149.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.1
+# google-api-python-client/google-auth* 13.08.2026 entfernt (Roland-Wunsch): Google-Calendar-
+# API-Sync komplett gestrichen, ICS-Kalenderabo ist der einzige Weg (siehe calendar_sync.py-
+# Docstring und project_vivendi_dienstplan_addon Memory).
 # Fallback-Zeitzonendatenbank fuer das stdlib-Modul "zoneinfo" (Schichtzeiten muessen
 # korrekt als Europe/Berlin interpretiert werden) - falls das schlanke python:slim-Image
 # kein System-tzdata mitbringt, greift Python automatisch auf dieses Paket zurueck.
