@@ -224,6 +224,21 @@ def main() -> None:
 
     _LOGGER.info("Dienstplan-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "06:00"))
 
+    # 14.08.2026 NUR TEMPORAER (siehe config.yaml, probe_date-Option): einmaliger
+    # Erkundungslauf statt des normalen Syncs, wenn gesetzt - fuer den Aufbau der
+    # automatischen Kuerzel-Aufloesung per Tag-Klick.
+    probe_date_raw = options.get("probe_date", "")
+    if probe_date_raw:
+        _LOGGER.info("PROBE-Modus: Tag-Klick-Erkundung fuer %s statt normalem Sync", probe_date_raw)
+        ergebnis = vivendi.probe_tag_klick(
+            login_url=options["vivendi_login_url"],
+            username=options["vivendi_username"],
+            password=options["vivendi_password"],
+            target_date=date.fromisoformat(probe_date_raw),
+        )
+        _LOGGER.info("PROBE-Ergebnis: %s", ergebnis)
+        return
+
     # 13.08.2026 einmaliger Aufraeum-Schritt: eine evtl. noch offene alte
     # "dienstplan_sync_google_api_error"-Benachrichtigung aus der Zeit, als der Google-API-Teil
     # noch existierte, wird nie wieder aktiv geloescht (die Automation, die sie erzeugt hat, gibt

@@ -154,6 +154,49 @@ class VivendiExportError(Exception):
     """Login war ok, aber der Export-Download ist fehlgeschlagen."""
 
 
+def _login_and_open_calendar(page: Page, login_url: str, username: str, password: str) -> None:
+    """Login + Navigation bis zur Kalenderansicht (Lesezeichen 'Dienstplan') - der Teil, der
+    sowohl fuer den normalen Excel-Export als auch fuer den Tag-Klick-Detailabruf (siehe
+    _login_and_open_calendar()-Aufrufer) identisch ist. Extrahiert 14.08.2026 aus
+    download_dienstplan() heraus, um Code-Duplizierung zu vermeiden."""
+    try:
+        page.goto(login_url or LOGIN_URL, wait_until="networkidle", timeout=30000)
+        _debug_shot(page, "01_login_page")
+
+        page.get_by_label("Benutzer").fill(username)
+        page.get_by_label("Kennwort").fill(password)
+
+        with page.expect_response(
+            lambda r: "/api/vivendi/v1/auth/login" in r.url, timeout=15000
+        ) as response_info:
+            page.get_by_role("button", name="Anmelden").click()
+        response = response_info.value
+
+        if response.status != 200:
+            _debug_shot(page, "02_login_failed")
+            raise VivendiLoginError(
+                f"Login fehlgeschlagen (HTTP {response.status}). "
+                "Zugangsdaten pruefen oder Portal-Struktur hat sich geaendert."
+            )
+        page.wait_for_load_state("networkidle", timeout=20000)
+        _debug_shot(page, "02_nach_login")
+    except PlaywrightTimeoutError as exc:
+        _debug_shot(page, "02_login_timeout")
+        raise VivendiLoginError(
+            "Login-Formular oder Antwort nicht innerhalb des Zeitlimits gefunden - "
+            "hat sich die Seitenstruktur geaendert?"
+        ) from exc
+
+    try:
+        page.locator("button, [role=button]").filter(has_text="×").first.click(timeout=3000)
+    except PlaywrightTimeoutError:
+        pass
+
+    page.get_by_text("Dienstplan", exact=True).first.click()
+    page.wait_for_load_state("networkidle", timeout=20000)
+    _debug_shot(page, "03_kalender", html=True)
+
+
 def download_dienstplan(login_url: str, username: str, password: str, target_paths: list[str]) -> list[str]:
     """Loggt sich einmal ein und exportiert der Reihe nach len(target_paths) aufeinanderfolgende
     Monate, beginnend beim aktuellen Monat: target_paths[0] = aktueller Monat, target_paths[1]
@@ -172,53 +215,9 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
 
-        try:
-            page.goto(login_url or LOGIN_URL, wait_until="networkidle", timeout=30000)
-            _debug_shot(page, "01_login_page")
-
-            page.get_by_label("Benutzer").fill(username)
-            page.get_by_label("Kennwort").fill(password)
-
-            with page.expect_response(
-                lambda r: "/api/vivendi/v1/auth/login" in r.url, timeout=15000
-            ) as response_info:
-                page.get_by_role("button", name="Anmelden").click()
-            response = response_info.value
-
-            if response.status != 200:
-                _debug_shot(page, "02_login_failed")
-                raise VivendiLoginError(
-                    f"Login fehlgeschlagen (HTTP {response.status}). "
-                    "Zugangsdaten pruefen oder Portal-Struktur hat sich geaendert."
-                )
-            page.wait_for_load_state("networkidle", timeout=20000)
-            _debug_shot(page, "02_nach_login")
-        except PlaywrightTimeoutError as exc:
-            _debug_shot(page, "02_login_timeout")
-            raise VivendiLoginError(
-                "Login-Formular oder Antwort nicht innerhalb des Zeitlimits gefunden - "
-                "hat sich die Seitenstruktur geaendert?"
-            ) from exc
-
-        # "Browser is out-of-date"-Banner der Startseite schliessen, falls vorhanden (echter
-        # Testlauf 30.07.2026 zeigte es zuverlaessig oben ueber der ganzen Seite an - koennte
-        # spaetere Klicks ueberlagern). Rein defensiv, bricht bei Nichtvorhandensein nicht ab.
-        try:
-            page.locator("button, [role=button]").filter(has_text="×").first.click(timeout=3000)
-        except PlaywrightTimeoutError:
-            pass
+        _login_and_open_calendar(page, login_url, username, password)
 
         try:
-            # KORRIGIERT (30.07.2026, nach echtem Testlauf mit Debug-Screenshots): Die vom
-            # Nutzer aus dem Gedaechtnis beschriebenen Schritte ("Kalender anzeigen" -> Drei-
-            # Punkte-Menu -> Export -> Excel) passten nicht zur echten Startseite - "Kalender
-            # anzeigen" kommt dort gar nicht vor. Tatsaechlich vorhanden: ein Lesezeichen
-            # "Dienstplan" im Bereich "Lesezeichen" auf der Startseite, das direkt zur
-            # Dienstplan-Ansicht fuehrt (siehe Modul-Docstring, beide Testlaeufe 30.07.2026).
-            page.get_by_text("Dienstplan", exact=True).first.click()
-            page.wait_for_load_state("networkidle", timeout=20000)
-            _debug_shot(page, "03_kalender", html=True)
-
             # Export bezieht sich auf den angezeigten Monat, nicht automatisch auf den
             # aktuellen (siehe Modul-Docstring) - deshalb zuerst dorthin navigieren, dann fuer
             # jeden weiteren gewuenschten Monat einmal "Monat Vor" klicken und erneut
@@ -253,3 +252,55 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
             browser.close()
 
     return target_paths
+
+
+def probe_tag_klick(login_url: str, username: str, password: str, target_date: _dt_date) -> dict:
+    """EXPLORATIVER Erkundungslauf (14.08.2026, Vorstufe fuer resolve_unknown_codes() -
+    Rolands Wunsch, unbekannte Kuerzel automatisch durch Antippen des Kalendertags
+    aufzuloesen): Vivendis Tag-Klick-Detailfenster wurde vom Code bisher nie angefasst, die
+    Selektoren sind komplett unbekannt. Probiert mehrere plausible Wege, den Tag anzuklicken,
+    nimmt nach jedem Versuch einen Screenshot + HTML-Dump auf und gibt zurueck, was gefunden
+    wurde - dient NUR der Selektor-Erkundung, wird durch die echte Implementierung ersetzt,
+    sobald die Struktur bekannt ist. Nicht Teil des normalen main.py-Ablaufs."""
+    ergebnis: dict = {"day_click_versuche": []}
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        context = browser.new_context(accept_downloads=True)
+        page = context.new_page()
+        try:
+            _login_and_open_calendar(page, login_url, username, password)
+            _go_to_month(page, target_date.year, target_date.month)
+            _debug_shot(page, "80_probe_vor_klick", html=True)
+
+            day_str = str(target_date.day)
+            kandidaten = [
+                ("get_by_text exact", lambda: page.get_by_text(day_str, exact=True).first),
+                ("role button exact", lambda: page.get_by_role("button", name=day_str, exact=True).first),
+                ("role cell exact", lambda: page.get_by_role("cell", name=day_str, exact=True).first),
+                ("role gridcell exact", lambda: page.get_by_role("gridcell", name=day_str, exact=True).first),
+            ]
+            for name, getter in kandidaten:
+                eintrag = {"strategie": name}
+                try:
+                    locator = getter()
+                    eintrag["gefunden"] = locator.count() > 0
+                    if eintrag["gefunden"]:
+                        locator.click(timeout=5000)
+                        page.wait_for_timeout(1500)
+                        shot_name = f"81_probe_klick_{name.replace(' ', '_')}"
+                        _debug_shot(page, shot_name, html=True)
+                        eintrag["screenshot"] = shot_name
+                        # Breiter Textextraktions-Versuch: alles, was wie ein Dialog/Popup
+                        # aussieht (mehrere generische Kandidaten, da die echte Struktur noch
+                        # unbekannt ist).
+                        for dialog_sel in ["[role=dialog]", ".modal", ".cx-dialog", ".mat-dialog-container", ".p-dialog"]:
+                            dl = page.locator(dialog_sel)
+                            if dl.count() > 0:
+                                eintrag[f"dialog_text[{dialog_sel}]"] = dl.first.inner_text(timeout=2000)
+                except Exception as exc:  # noqa: BLE001 - Erkundung soll bei Fehlschlag einfach weitermachen
+                    eintrag["fehler"] = str(exc)
+                ergebnis["day_click_versuche"].append(eintrag)
+                _LOGGER.info("Probe-Versuch: %s", eintrag)
+        finally:
+            browser.close()
+    return ergebnis
