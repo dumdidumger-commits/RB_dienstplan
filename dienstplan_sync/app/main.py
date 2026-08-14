@@ -235,6 +235,7 @@ def main() -> None:
             username=options["vivendi_username"],
             password=options["vivendi_password"],
             target_date=date.fromisoformat(probe_date_raw),
+            chip_text=options.get("probe_chip", ""),
         )
         _LOGGER.info("PROBE-Ergebnis: %s", ergebnis)
         return

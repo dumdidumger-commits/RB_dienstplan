@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import date as _dt_date
 
 from playwright.sync_api import Page, sync_playwright, TimeoutError as PlaywrightTimeoutError
@@ -104,8 +105,6 @@ def _go_to_month(page: Page, target_year: int, target_month: int) -> None:
     lassen). Bricht defensiv ab, wenn die Monatsueberschrift nicht erkannt wird, statt endlos
     zu klicken.
     """
-    import re
-
     target = (target_year, target_month)
     heading = page.locator(".cx-calendar-date-select__date-label").first
     next_button = page.get_by_role("button", name="Monat Vor")
@@ -254,7 +253,7 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
     return target_paths
 
 
-def probe_tag_klick(login_url: str, username: str, password: str, target_date: _dt_date) -> dict:
+def probe_tag_klick(login_url: str, username: str, password: str, target_date: _dt_date, chip_text: str = "") -> dict:
     """EXPLORATIVER Erkundungslauf (14.08.2026, Vorstufe fuer resolve_unknown_codes() -
     Rolands Wunsch, unbekannte Kuerzel automatisch durch Antippen des Kalendertags
     aufzuloesen): Vivendis Tag-Klick-Detailfenster wurde vom Code bisher nie angefasst, die
@@ -273,12 +272,21 @@ def probe_tag_klick(login_url: str, username: str, password: str, target_date: _
             _debug_shot(page, "80_probe_vor_klick", html=True)
 
             day_str = str(target_date.day)
+            # 14.08.2026, 2. Erkundungsrunde: HTML-Dump zeigte die echte Struktur - Tageszelle
+            # ist .dienstliste-monat__cell (Tageszahl in .dienstliste-monat__cell-date), jede
+            # Schicht darin ein eigener .dienst-icon-Chip (z.B. "MB"). Der einfache Klick auf
+            # die Tageszahl (1. Runde) hat die Zelle nur markiert, kein Fenster geoeffnet -
+            # vermutlich muss der Chip selbst angeklickt werden.
+            day_cell = page.locator(".dienstliste-monat__cell").filter(
+                has=page.locator(".dienstliste-monat__cell-date", has_text=re.compile(rf"^\s*{day_str}\s*$"))
+            ).first
             kandidaten = [
-                ("get_by_text exact", lambda: page.get_by_text(day_str, exact=True).first),
-                ("role button exact", lambda: page.get_by_role("button", name=day_str, exact=True).first),
-                ("role cell exact", lambda: page.get_by_role("cell", name=day_str, exact=True).first),
-                ("role gridcell exact", lambda: page.get_by_role("gridcell", name=day_str, exact=True).first),
+                ("day_cell", lambda: day_cell),
             ]
+            if chip_text:
+                kandidaten.append(
+                    ("chip_in_day_cell", lambda: day_cell.locator(".dienst-icon", has_text=re.compile(rf"^\s*{re.escape(chip_text)}\s*$")).first)
+                )
             for name, getter in kandidaten:
                 eintrag = {"strategie": name}
                 try:
