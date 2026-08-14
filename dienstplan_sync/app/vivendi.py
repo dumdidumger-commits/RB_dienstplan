@@ -253,62 +253,93 @@ def download_dienstplan(login_url: str, username: str, password: str, target_pat
     return target_paths
 
 
-def probe_tag_klick(login_url: str, username: str, password: str, target_date: _dt_date, chip_text: str = "") -> dict:
-    """EXPLORATIVER Erkundungslauf (14.08.2026, Vorstufe fuer resolve_unknown_codes() -
-    Rolands Wunsch, unbekannte Kuerzel automatisch durch Antippen des Kalendertags
-    aufzuloesen): Vivendis Tag-Klick-Detailfenster wurde vom Code bisher nie angefasst, die
-    Selektoren sind komplett unbekannt. Probiert mehrere plausible Wege, den Tag anzuklicken,
-    nimmt nach jedem Versuch einen Screenshot + HTML-Dump auf und gibt zurueck, was gefunden
-    wurde - dient NUR der Selektor-Erkundung, wird durch die echte Implementierung ersetzt,
-    sobald die Struktur bekannt ist. Nicht Teil des normalen main.py-Ablaufs."""
-    ergebnis: dict = {"day_click_versuche": []}
+def resolve_unbekannte_codes(
+    login_url: str, username: str, password: str, unresolved: list[tuple[_dt_date, str]],
+) -> dict[str, str]:
+    """Loest unbekannte Ist-Codes automatisch auf, indem der jeweilige Schicht-Chip im
+    Kalender angeklickt wird - das oeffnet ein Detail-Panel mit der genauen Bezeichnung
+    (14.08.2026, Rolands Wunsch: "auf den Tag klicken..., diesen dann uebernehmen und der
+    Datenbank hinzufuegen").
+
+    Struktur per Erkundungslauf ermittelt (zwei Runden mit Debug-Screenshots/HTML-Dumps,
+    siehe project_vivendi_dienstplan_addon Memory): Tageszelle ist
+    .dienstliste-monat__cell (Tageszahl in .dienstliste-monat__cell-date), jede Schicht
+    darin ein eigener .dienst-icon-Chip. Klick darauf oeffnet ein Detail-Panel; die genaue
+    Bezeichnung steht im <pep-dienst-name>-Element (bestaetigt live: Klick auf den "MB"-Chip
+    vom 14.08.2026 zeigte korrekt "Mäeutische Besprechung"). Panel wird ueber den
+    "Schließen"-Button (aria-label) wieder geschlossen, bevor der naechste Code drankommt.
+
+    unresolved: Liste von (Datum, Ist-Code)-Paaren (typischerweise von main.py aus den beim
+    Parsen uebersprungenen Zeilen zusammengestellt). Bei mehreren Vorkommen desselben Codes
+    reicht ein Vorkommen - wird hier dedupliziert (erstes Datum pro Code gewinnt), nach Monat
+    gruppiert, um Monatswechsel-Klicks zu minimieren.
+
+    Gibt {ist_code: genaue_bezeichnung} fuer alle ERFOLGREICH aufgeloesten Codes zurueck -
+    einzelne Fehlschlaege (Chip nicht gefunden, Panel-Struktur weicht ab, o.ae.) werden pro
+    Code geloggt und einfach uebersprungen, brechen den Rest nicht ab (gleiches Muster wie
+    beim requested_dates-Nachtrag im ZenWave-Sync-Add-on).
+    """
+    code_zu_datum: dict[str, _dt_date] = {}
+    for datum, code in unresolved:
+        code_zu_datum.setdefault(code, datum)
+
+    ergebnis: dict[str, str] = {}
+    if not code_zu_datum:
+        return ergebnis
+
+    # Nach Monat gruppieren, chronologisch abarbeiten - _go_to_month() navigiert dann nur
+    # einmal pro Monatswechsel statt bei jedem einzelnen Code hin und her.
+    nach_monat: dict[tuple[int, int], list[tuple[str, _dt_date]]] = {}
+    for code, datum in code_zu_datum.items():
+        nach_monat.setdefault((datum.year, datum.month), []).append((code, datum))
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
         try:
             _login_and_open_calendar(page, login_url, username, password)
-            _go_to_month(page, target_date.year, target_date.month)
-            _debug_shot(page, "80_probe_vor_klick", html=True)
 
-            day_str = str(target_date.day)
-            # 14.08.2026, 2. Erkundungsrunde: HTML-Dump zeigte die echte Struktur - Tageszelle
-            # ist .dienstliste-monat__cell (Tageszahl in .dienstliste-monat__cell-date), jede
-            # Schicht darin ein eigener .dienst-icon-Chip (z.B. "MB"). Der einfache Klick auf
-            # die Tageszahl (1. Runde) hat die Zelle nur markiert, kein Fenster geoeffnet -
-            # vermutlich muss der Chip selbst angeklickt werden.
-            day_cell = page.locator(".dienstliste-monat__cell").filter(
-                has=page.locator(".dienstliste-monat__cell-date", has_text=re.compile(rf"^\s*{day_str}\s*$"))
-            ).first
-            kandidaten = [
-                ("day_cell", lambda: day_cell),
-            ]
-            if chip_text:
-                kandidaten.append(
-                    ("chip_in_day_cell", lambda: day_cell.locator(".dienst-icon", has_text=re.compile(rf"^\s*{re.escape(chip_text)}\s*$")).first)
-                )
-            for name, getter in kandidaten:
-                eintrag = {"strategie": name}
-                try:
-                    locator = getter()
-                    eintrag["gefunden"] = locator.count() > 0
-                    if eintrag["gefunden"]:
-                        locator.click(timeout=5000)
-                        page.wait_for_timeout(1500)
-                        shot_name = f"81_probe_klick_{name.replace(' ', '_')}"
-                        _debug_shot(page, shot_name, html=True)
-                        eintrag["screenshot"] = shot_name
-                        # Breiter Textextraktions-Versuch: alles, was wie ein Dialog/Popup
-                        # aussieht (mehrere generische Kandidaten, da die echte Struktur noch
-                        # unbekannt ist).
-                        for dialog_sel in ["[role=dialog]", ".modal", ".cx-dialog", ".mat-dialog-container", ".p-dialog"]:
-                            dl = page.locator(dialog_sel)
-                            if dl.count() > 0:
-                                eintrag[f"dialog_text[{dialog_sel}]"] = dl.first.inner_text(timeout=2000)
-                except Exception as exc:  # noqa: BLE001 - Erkundung soll bei Fehlschlag einfach weitermachen
-                    eintrag["fehler"] = str(exc)
-                ergebnis["day_click_versuche"].append(eintrag)
-                _LOGGER.info("Probe-Versuch: %s", eintrag)
+            for (year, month), eintraege in sorted(nach_monat.items()):
+                _go_to_month(page, year, month)
+                for code, datum in eintraege:
+                    try:
+                        day_cell = page.locator(".dienstliste-monat__cell").filter(
+                            has=page.locator(".dienstliste-monat__cell-date", has_text=re.compile(rf"^\s*{datum.day}\s*$"))
+                        ).first
+                        chip = day_cell.locator(
+                            ".dienst-icon", has_text=re.compile(rf"^\s*{re.escape(code)}\s*$")
+                        ).first
+                        if chip.count() == 0:
+                            _LOGGER.warning(
+                                "Chip fuer Code %r am %s nicht gefunden - vermutlich hat sich "
+                                "die Tagesansicht seit dem Excel-Export veraendert, ueberspringe",
+                                code, datum,
+                            )
+                            continue
+                        chip.click(timeout=5000)
+                        name_locator = page.locator("pep-dienst-name").first
+                        name_locator.wait_for(state="visible", timeout=8000)
+                        bezeichnung = (name_locator.inner_text(timeout=3000) or "").strip()
+                        _debug_shot(page, f"90_aufgeloest_{code}", html=True)
+                        if bezeichnung:
+                            ergebnis[code] = bezeichnung
+                            _LOGGER.info("Code %r aufgeloest: %r (via %s)", code, bezeichnung, datum)
+                        page.get_by_role("button", name="Schließen").click(timeout=5000)
+                        page.wait_for_timeout(300)
+                    except PlaywrightTimeoutError:
+                        _LOGGER.warning(
+                            "Aufloesung fuer Code %r am %s nicht innerhalb des Zeitlimits "
+                            "abgeschlossen (Chip-Klick oder Detail-Panel) - ueberspringe",
+                            code, datum,
+                        )
+                        _debug_shot(page, f"90_aufloesung_fehlgeschlagen_{code}", html=True)
+                        # Versuchen, ein evtl. offen gebliebenes Panel zu schliessen, damit der
+                        # naechste Code nicht sofort auch fehlschlaegt.
+                        try:
+                            page.get_by_role("button", name="Schließen").click(timeout=2000)
+                        except PlaywrightTimeoutError:
+                            pass
         finally:
             browser.close()
     return ergebnis

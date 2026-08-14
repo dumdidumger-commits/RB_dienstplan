@@ -1,5 +1,5 @@
 name: "Vivendi Dienstplan Sync"
-version: "0.1.6"
+version: "0.1.7"
 slug: "dienstplan_sync"
 description: "Synchronisiert den Vivendi-Dienstplan taeglich mit einem Google-Kalender"
 url: "https://github.com/dumdidumger-commits/RB_dienstplan"
@@ -23,13 +23,6 @@ options:
   log_level: "info"
   debug_screenshots: false
   nabu_casa_base_url: "https://9socrjhuhu4fraznz7zna34u9zhznzrx.ui.nabu.casa"
-  # 14.08.2026 NUR TEMPORAER fuer die Selektor-Erkundung des Tag-Klick-Detailfensters
-  # (Vorstufe fuer die automatische Kuerzel-Aufloesung, siehe vivendi.probe_tag_klick()) -
-  # ISO-Datum setzen, um einmalig beim naechsten Start probe_tag_klick() statt des normalen
-  # Syncs laufen zu lassen. Wieder auf "" zurueckstellen (oder die Option ganz entfernen),
-  # sobald die echte Feature-Implementierung steht.
-  probe_date: ""
-  probe_chip: ""
 schema:
   vivendi_username: str
   vivendi_password: password
@@ -39,8 +32,6 @@ schema:
   log_level: list(debug|info|warning|error)
   debug_screenshots: bool
   nabu_casa_base_url: url
-  probe_date: str
-  probe_chip: str
 map:
   - share:rw
   # Noetig fuer die ICS-Kalender-URL (30.07.2026, zusaetzliche Absicherung neben der

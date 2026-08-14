@@ -65,7 +65,7 @@ _MONATSNAMEN = [
 ]
 
 
-def _notify_shift_changes(shifts: list) -> None:
+def _notify_shift_changes(shifts: list, neu_aufgeloest: dict[str, str] | None = None) -> None:
     """Vergleicht die frisch geparsten Schichten mit dem Stand des letzten Laufs und meldet
     das Ergebnis per Push (12.08.2026, Rolands Wunsch). Bewusst unabhaengig von der
     Google-API (rein lokaler Vergleich anhand von /data/last_shifts_snapshot.json) - passt
@@ -96,6 +96,10 @@ def _notify_shift_changes(shifts: list) -> None:
     old_coverage_end = alt.get("coverage_end")
 
     absatz = []
+
+    if neu_aufgeloest:
+        zeilen = [f'"{code}" = {bezeichnung}' for code, bezeichnung in sorted(neu_aufgeloest.items())]
+        absatz.append("Neuer Kürzel automatisch aufgelöst und übernommen:\n" + "\n".join(zeilen))
 
     if not old_by_id or not old_coverage_end:
         absatz.append("Erster Lauf, ich hab mir den aktuellen Stand als Vergleichsbasis gemerkt.")
@@ -159,9 +163,45 @@ def sync_once(options: dict) -> None:
     _LOGGER.info("Dienstplan heruntergeladen: %s", ", ".join(xlsx_paths))
 
     shifts = []
+    unresolved: list[tuple[date, str]] = []
     for xlsx_path in xlsx_paths:
-        shifts.extend(dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH))
+        neue_shifts, neue_unresolved = dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH)
+        shifts.extend(neue_shifts)
+        unresolved.extend(neue_unresolved)
     _LOGGER.info("%d Schicht(en) aus %d Datei(en) geparst", len(shifts), len(xlsx_paths))
+
+    # 14.08.2026 neu (Roland-Wunsch): unbekannte Ist-Codes automatisch aufloesen, statt sie
+    # nur zu ueberspringen - klickt den jeweiligen Schicht-Chip im Kalender an (oeffnet ein
+    # Detail-Panel mit der genauen Bezeichnung), traegt sie in kuerzel_mapping.yaml ein und
+    # parst danach neu, damit die betroffenen Termine noch IM SELBEN Lauf mit uebernommen
+    # werden (nicht erst naechstes Mal). Eigener try/except, ein Fehlschlag hier darf den
+    # Rest des Laufs nicht gefaehrden - unbekannte Codes bleiben dann einfach wie bisher
+    # uebersprungen (siehe project_vivendi_dienstplan_addon Memory).
+    neu_aufgeloest: dict[str, str] = {}
+    if unresolved:
+        _LOGGER.info("%d unbekannte Ist-Code-Vorkommen gefunden, versuche automatische Aufloesung: %s",
+                      len(unresolved), sorted({c for _, c in unresolved}))
+        try:
+            neu_aufgeloest = vivendi.resolve_unbekannte_codes(
+                login_url=options["vivendi_login_url"],
+                username=options["vivendi_username"],
+                password=options["vivendi_password"],
+                unresolved=unresolved,
+            )
+        except Exception:  # noqa: BLE001 - unbekannte Codes bleiben sonst einfach uebersprungen
+            _LOGGER.exception("Automatische Kuerzel-Aufloesung fehlgeschlagen, fahre ohne fort")
+
+        if neu_aufgeloest:
+            for code, bezeichnung in neu_aufgeloest.items():
+                dienstplan_parser.add_kuerzel_mapping_entry(KUERZEL_MAPPING_PATH, code, bezeichnung)
+            _LOGGER.info("Neu in kuerzel_mapping.yaml uebernommen: %s", neu_aufgeloest)
+            # Neu parsen, jetzt mit der aktualisierten Mapping-Datei - macht die eben
+            # aufgeloesten Codes noch in diesem Lauf sichtbar (Termine + ICS + Push).
+            shifts = []
+            for xlsx_path in xlsx_paths:
+                neue_shifts, _ = dienstplan_parser.parse_dienstplan(xlsx_path, KUERZEL_MAPPING_PATH)
+                shifts.extend(neue_shifts)
+            _LOGGER.info("Nach Aufloesung neu geparst: %d Schicht(en)", len(shifts))
 
     # 12.08.2026 Fix: ICS-Backup bewusst VOR dem Google-API-Aufruf, in eigenem try/except -
     # vorher stand das NACH dem Google-Sync, wodurch es bei einem OAuth-Fehler (genau der
@@ -191,7 +231,7 @@ def sync_once(options: dict) -> None:
     # Ebenfalls unabhaengig vom Google-API-Teil unten (rein lokaler Vergleich) - eigener
     # try/except, ein Fehler hier soll weder ICS noch Google-Sync verhindern.
     try:
-        _notify_shift_changes(shifts)
+        _notify_shift_changes(shifts, neu_aufgeloest)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dienstplan-Aenderungserkennung fehlgeschlagen")
 
@@ -223,22 +263,6 @@ def main() -> None:
         _LOGGER.info("Debug-Screenshots aktiviert, werden unter /share/dienstplan_sync/debug/ gespeichert")
 
     _LOGGER.info("Dienstplan-Sync-Add-on gestartet, taeglicher Lauf um %s Uhr", options.get("run_time", "06:00"))
-
-    # 14.08.2026 NUR TEMPORAER (siehe config.yaml, probe_date-Option): einmaliger
-    # Erkundungslauf statt des normalen Syncs, wenn gesetzt - fuer den Aufbau der
-    # automatischen Kuerzel-Aufloesung per Tag-Klick.
-    probe_date_raw = options.get("probe_date", "")
-    if probe_date_raw:
-        _LOGGER.info("PROBE-Modus: Tag-Klick-Erkundung fuer %s statt normalem Sync", probe_date_raw)
-        ergebnis = vivendi.probe_tag_klick(
-            login_url=options["vivendi_login_url"],
-            username=options["vivendi_username"],
-            password=options["vivendi_password"],
-            target_date=date.fromisoformat(probe_date_raw),
-            chip_text=options.get("probe_chip", ""),
-        )
-        _LOGGER.info("PROBE-Ergebnis: %s", ergebnis)
-        return
 
     # 13.08.2026 einmaliger Aufraeum-Schritt: eine evtl. noch offene alte
     # "dienstplan_sync_google_api_error"-Benachrichtigung aus der Zeit, als der Google-API-Teil
