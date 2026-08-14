@@ -304,8 +304,13 @@ def resolve_unbekannte_codes(
                 _go_to_month(page, year, month)
                 for code, datum in eintraege:
                     try:
+                        # Vivendi zeigt einstellige Tage zweistellig gepolstert an ("07" statt
+                        # "7") - live entdeckt (14.08.2026), als der erste Testlauf fuer den
+                        # 07.08. scheiterte, obwohl derselbe Mechanismus fuer den 14.08.
+                        # (zufaellig schon zweistellig) im Erkundungslauf funktioniert hatte.
+                        # 0? deckt beide Schreibweisen ab.
                         day_cell = page.locator(".dienstliste-monat__cell").filter(
-                            has=page.locator(".dienstliste-monat__cell-date", has_text=re.compile(rf"^\s*{datum.day}\s*$"))
+                            has=page.locator(".dienstliste-monat__cell-date", has_text=re.compile(rf"^\s*0?{datum.day}\s*$"))
                         ).first
                         chip = day_cell.locator(
                             ".dienst-icon", has_text=re.compile(rf"^\s*{re.escape(code)}\s*$")
@@ -316,6 +321,7 @@ def resolve_unbekannte_codes(
                                 "die Tagesansicht seit dem Excel-Export veraendert, ueberspringe",
                                 code, datum,
                             )
+                            _debug_shot(page, f"90_chip_nicht_gefunden_{code}", html=True)
                             continue
                         chip.click(timeout=5000)
                         name_locator = page.locator("pep-dienst-name").first
